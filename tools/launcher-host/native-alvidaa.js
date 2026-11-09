@@ -23,6 +23,24 @@
   "use strict";
   var DOCK_SIZE = 320, DOCK_HEIGHT = 176, DOCK_GAP = 24, DOCK_PAGE = 5;
   var OVERLAY_COLS = 5, OVERLAY_CELL = 192;
+  // Brand colours, so a letter badge reads as the app rather than as a random
+  // hue. Only used when the build gives us no local icon; no network fetch.
+  var BRANDS = [
+    [/netflix/i, "#b20710"],
+    [/youtube/i, "#c4302b"],
+    [/prime|amazon/i, "#17689c"],
+    [/disney/i, "#113ccf"],
+    [/spotify/i, "#1db954"],
+    [/plex/i, "#e5a00d"],
+    [/apple\s*tv/i, "#1d1d1f"],
+    [/hulu/i, "#1ce783"],
+    [/hbo|max\b/i, "#5b2c8d"],
+    [/paramount/i, "#0064ff"],
+    [/peacock/i, "#111111"],
+    [/browser/i, "#3b82f6"],
+    [/live\s*tv|tv\s*channels/i, "#0ea5e9"],
+    [/settings/i, "#64748b"]
+  ];
 
   function create(sdk) {
     var keys = sdk.key.KEYMAP;
@@ -32,6 +50,13 @@
       var h = 0, text = String(value || "");
       for (var i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) % 360;
       return h;
+    }
+    function brand(name) {
+      var text = String(name || "");
+      for (var i = 0; i < BRANDS.length; i++) {
+        if (BRANDS[i][0].test(text)) return BRANDS[i][1];
+      }
+      return "hsl(" + hue(text) + ", 45%, 38%)";
     }
     function signalOf(input) {
       var value = input.is_signal != null ? input.is_signal : input.has_signal;
@@ -130,7 +155,10 @@
           return label;
         },
         localIcon: function (app) {
-          var candidates = [app.img, app.presetImg, app.icon, app.appIcon];
+          // Local fields only. Remote icons would mean the native Home fetches
+          // the open web, which this component deliberately does not do.
+          var candidates = [app.img, app.presetImg, app.icon, app.appIcon,
+            app.icon_local_url, app.iconLocalUrl, app.localIcon];
           var icon = candidates.filter(function (value) {
             return typeof value === "string" &&
               /^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i.test(value);
@@ -336,7 +364,9 @@
                 "linear-gradient(180deg, #232a36, #141822)" :
                 "linear-gradient(180deg, #161b24, #0d1017)",
               border: "1px solid " + (focused ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"),
-              overflow: "hidden"
+              overflow: "hidden",
+              transition: "transform 140ms ease-out, border-color 140ms ease-out",
+              transform: focused ? "scale(1.03)" : "scale(1)"
             }),
             on: { click: function (index) {
               return function () { vm.zone = "dock"; vm.dock = index; vm.activate(); };
@@ -376,7 +406,9 @@
                 "linear-gradient(180deg, #232a36, #141822)" :
                 "linear-gradient(180deg, #161b24, #0d1017)",
               border: "1px solid " + (focused ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)"),
-              overflow: "hidden"
+              overflow: "hidden",
+              transition: "transform 140ms ease-out, border-color 140ms ease-out",
+              transform: focused ? "scale(1.03)" : "scale(1)"
             }),
             on: { click: function () { vm.zone = "apps"; vm.app = index; vm.activate(); } }
           }, children));
@@ -395,6 +427,11 @@
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
             pointerEvents: "none",
             backgroundImage: "linear-gradient(180deg, rgba(56,189,248,0.06), rgba(99,102,241,0.02) 40%, rgba(7,8,12,0) 70%)"
+          } }),
+          h("div", { style: {
+            position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+            pointerEvents: "none",
+            backgroundImage: "linear-gradient(315deg, rgba(99,102,241,0.10), rgba(7,8,12,0) 55%)"
           } }),
           stage,
           h("div", { style: box(112, 1040, null, null, {
@@ -440,11 +477,14 @@
                 backgroundRepeat: "no-repeat"
               }) }));
             } else {
+              var badge = brand(app.appName);
               cell.push(h("div", { style: box((cellW - 16 - 72) / 2, 26, 72, 72, {
-                borderRadius: 16, backgroundColor: "hsl(" + hue(app.appName) + ", 18%, 22%)"
+                borderRadius: 18, backgroundColor: badge, overflow: "hidden"
               }) }, [
-                h("div", { style: box(0, 0, cellW - 16, 72, {
-                  fontSize: 34, lineHeight: 72, textAlign: "center", color: "#e2e8f0"
+                h("div", { style: box(0, 0, 72, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
+                h("div", { style: box(0, 0, 72, 72, {
+                  fontSize: 34, lineHeight: 72, textAlign: "center",
+                  fontWeight: "700", color: "#ffffff"
                 }) }, [String(app.appName || "?").charAt(0).toUpperCase()])
               ]));
             }

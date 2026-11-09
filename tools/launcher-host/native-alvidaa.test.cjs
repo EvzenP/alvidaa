@@ -222,6 +222,11 @@ test('render keeps the dock design, scales it and never loads the open web', () 
   assert.equal(clock.data.style.lineHeight, 120 * 1280 / 1920 + 'px');
   assert.equal(v.overlay, false);
   assert.doesNotMatch(JSON.stringify(tree), /cdn\.example/);
+  // The focused dock tile lifts; the others stay put.
+  const scales = flat.filter(n => n.data && n.data.style && n.data.style.transform)
+    .map(n => n.data.style.transform);
+  assert.ok(scales.includes('scale(1.03)'));
+  assert.ok(scales.includes('scale(1)'));
   // A no-signal port keeps the design's grey name and its own subline.
   v.dock = 1;
   const quiet = flatten(draw());
@@ -251,6 +256,11 @@ test('the apps row pans into view and the overlay paints local icons only', () =
   assert.deepEqual(urls, ['url("file:///hisenseUI/var/local/storeAppIcon/netflix.png")']);
   assert.ok(overlay.some(n => (n.children || []).includes('Netflix')));
   assert.ok(overlay.some(n => (n.children || []).includes('OK to open · BACK to close')));
+  // Plex has only a remote icon, so it falls back to its brand colour rather
+  // than a random hue, and never fetches the remote URL.
+  const plexBadge = overlay.find(n => n.data && n.data.style &&
+    n.data.style.backgroundColor === '#e5a00d');
+  assert.ok(plexBadge, 'Plex badge should use its brand colour');
   v.stop();
 });
 

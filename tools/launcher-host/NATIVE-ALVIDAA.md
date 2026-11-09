@@ -43,6 +43,24 @@ The component consumes `native-platform.js`, which is where builds differ:
   hotel-mode checks
 - settings: `setting.open("settings")`
 
+### Icons: local only, brand colour as the fallback
+
+The component never fetches the open web. App records are checked for local
+icon fields only (`img`, `presetImg`, `icon`, `appIcon`, `icon_local_url`,
+`iconLocalUrl`, `localIcon`), and anything starting with `http` is rejected.
+
+When a build only exposes remote icons, as this one does for most apps, the
+overlay draws a letter badge in the app's brand colour (Netflix red, YouTube
+red, Prime blue, Spotify green, Plex gold, and so on) rather than a random hue.
+That keeps the no-network property and still reads as the app.
+
+If you want real icons in lane 3, there are two honest options, both with a
+cost: accept the vendor's own icon host (what the stock launcher and the
+75U8QTUK port do, at the cost of a network fetch), or ship icons inside the
+component (at the cost of bundle size and a vendored asset). Neither is in this
+variant today.
+
+
 ## Build
 
 ```sh
