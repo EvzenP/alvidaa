@@ -137,7 +137,7 @@
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
           prefs: {
-            hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false
+            hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false, favorites: []
           }
         };
       },
@@ -153,12 +153,13 @@
             onlyApps: readPref("alvidaa_only_apps", []),
             customNames: readPref("alvidaa_custom_names", {}),
             lastUsed: readPref("alvidaa_last_used", null),
-            autoSwitch: isTruthy(readPref("alvidaa_auto_switch", false))
+            autoSwitch: isTruthy(readPref("alvidaa_auto_switch", false)),
+            favorites: readPref("alvidaa_favorites", [])
           };
           if (this._lastData && this._lastData.apps) {
             this.apps = this.filterApps(this._lastData.apps);
-            this.clamp();
           }
+          this.clamp();
         },
         filterApps: function (apps) {
           var vm = this;
@@ -287,11 +288,42 @@
         },
         dockItems: function () { return this.sources; },
         appItems: function () {
-          return [
-            { kind: "apps", label: "Apps", glyph: "\u25A6",
-              sub: this.apps.length ? this.apps.length + " apps" : "" },
-            { kind: "settings", label: "Settings", glyph: "\u2699", sub: "TV settings" }
-          ];
+          var items = [];
+          var favs = (this.prefs && this.prefs.favorites) || [];
+          if (Array.isArray(favs)) {
+            var count = 0, seen = {};
+            for (var i = 0; i < favs.length && count < 5; i++) {
+              var favId = String(favs[i]);
+              if (seen[favId]) continue;
+              seen[favId] = true;
+              var app = null;
+              for (var j = 0; j < this.apps.length; j++) {
+                if (String(this.apps[j].appId) === favId) {
+                  app = this.apps[j];
+                  break;
+                }
+              }
+              if (app) {
+                items.push({
+                  kind: "favorite",
+                  appId: app.appId,
+                  app: app,
+                  label: app.appName,
+                  glyph: app.glyph || "\u2605",
+                  sub: "Favorite"
+                });
+                count++;
+              }
+            }
+          }
+          items.push({
+            kind: "apps", label: "Apps", glyph: "\u25A6",
+            sub: this.apps.length ? this.apps.length + " apps" : ""
+          });
+          items.push({
+            kind: "settings", label: "Settings", glyph: "\u2699", sub: "TV settings"
+          });
+          return items;
         },
         dockStart: function () {
           var n = this.dockItems().length;
@@ -299,9 +331,12 @@
           return Math.max(0, Math.min(this.dock - 2, n - DOCK_PAGE));
         },
         clamp: function () {
-          this.dock = Math.max(0, Math.min(this.dock, this.dockItems().length - 1));
-          this.app = Math.max(0, Math.min(this.app, this.appItems().length - 1));
-          this.overlayIndex = Math.max(0, Math.min(this.overlayIndex, this.apps.length - 1));
+          var dockLen = this.dockItems().length;
+          this.dock = dockLen > 0 ? Math.max(0, Math.min(this.dock, dockLen - 1)) : 0;
+          var appLen = this.appItems().length;
+          this.app = appLen > 0 ? Math.max(0, Math.min(this.app, appLen - 1)) : 0;
+          var overlayLen = this.apps.length;
+          this.overlayIndex = overlayLen > 0 ? Math.max(0, Math.min(this.overlayIndex, overlayLen - 1)) : 0;
         },
         showToast: function (text, ms) {
           if (!text) return;
@@ -336,8 +371,12 @@
           }
           var item = this.appItems()[this.app];
           if (!item) return;
-          if (item.kind === "apps") this.openOverlay();
-          else {
+          if (item.kind === "favorite") {
+            this.showToast("Opening " + (item.label || "app") + "…");
+            this.run(function () { return vm._platform.launchApp(item.appId); });
+          } else if (item.kind === "apps") {
+            this.openOverlay();
+          } else {
             this.showToast("Opening " + item.label + "…");
             this.run(function () { return vm._platform.openSettings(); });
           }

@@ -109,6 +109,7 @@ note that static custom names can go stale if the physical device changes.
 | `alvidaa_custom_names` | object | `{}` | Map of `sourceId` (or input label) to custom display name applied in `sourceName()`. |
 | `alvidaa_last_used` | string / number | `null` | Last activated input `sourceId`, persisted on dock activation and used as `smartIndex()` fallback when no input has signal. |
 | `alvidaa_auto_switch` | boolean | `false` | Opt-in toggle for automatic input switching on boot. |
+| `alvidaa_favorites` | array of strings | `[]` | Pinned favorite app IDs in view 2 (max 5), launched directly. Stale IDs dropped silently. |
 
 
 ## Build
@@ -162,8 +163,8 @@ node --test tools/launcher-host/native-alvidaa.test.cjs
 ```
 
 Covers start/stop idempotence, app and input filtering, storage preferences
-(hidden/only apps, custom input names, last-used fallback, absent storage),
-name precedence, smart focus, dock and overlay navigation, Back ownership,
-action failures, toast HUD timing and expiry, remote number hotkeys (0-9),
-render structure and scaling, the entry's variant selection, and the build's
-hash and output guards.
+(hidden/only apps, custom input names, last-used fallback, pinned favorites,
+absent storage), name precedence, smart focus, dock and overlay navigation,
+Back ownership, action failures, toast HUD timing and expiry, remote number
+hotkeys (0-9), render structure and scaling, the entry's variant selection,
+and the build's hash and output guards.

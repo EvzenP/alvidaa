@@ -599,3 +599,84 @@ test('preferences: re-read on activated refreshes apps and smart focus', () => {
   assert.equal(v.dock, 1);
   v.stop();
 });
+
+test('favorites: empty favorites preserves stock [Apps, Settings] behavior', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  const items = v.appItems();
+  assert.equal(items.length, 2);
+  assert.equal(items[0].kind, 'apps');
+  assert.equal(items[0].label, 'Apps');
+  assert.equal(items[1].kind, 'settings');
+  assert.equal(items[1].label, 'Settings');
+  v.stop();
+});
+
+test('favorites: resolves favorites in order, drops stale IDs silently, and caps at 5', () => {
+  const f = setup({
+    storage: {
+      alvidaa_favorites: ['2', 'stale-999', '1', 'nonexistent']
+    }
+  }), v = f.instance;
+  v.start();
+  const items = v.appItems();
+  assert.equal(items.length, 4);
+  assert.equal(items[0].kind, 'favorite');
+  assert.equal(items[0].appId, '2');
+  assert.equal(items[0].label, 'Plex');
+  assert.equal(items[1].kind, 'favorite');
+  assert.equal(items[1].appId, '1');
+  assert.equal(items[1].label, 'Netflix');
+  assert.equal(items[2].kind, 'apps');
+  assert.equal(items[3].kind, 'settings');
+  v.stop();
+});
+
+test('favorites: activating favorite directly launches app without opening overlay; Apps and Settings unchanged', () => {
+  const f = setup({
+    storage: {
+      alvidaa_favorites: ['2']
+    }
+  }), v = f.instance;
+  v.start();
+  v.zone = 'apps';
+  v.app = 0; // Favorite (Plex)
+  v.activate();
+  assert.deepEqual(f.calls.at(-1), ['launch', '2']);
+  assert.equal(v.overlay, false);
+  assert.match(v.toast, /Opening Plex/);
+
+  // Focus Apps tile
+  v.app = 1; // Apps
+  v.activate();
+  assert.equal(v.overlay, true);
+  v.closeOverlay();
+
+  // Focus Settings tile
+  v.app = 2; // Settings
+  v.activate();
+  assert.deepEqual(f.calls.at(-1), ['settings']);
+  assert.match(v.toast, /Opening Settings/);
+  v.stop();
+});
+
+test('favorites: clamp tolerates changing favorites list', () => {
+  const f = setup({
+    storage: {
+      alvidaa_favorites: ['1', '2']
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.appItems().length, 4);
+  v.zone = 'apps';
+  v.app = 3; // Settings (index 3)
+  v.clamp();
+  assert.equal(v.app, 3);
+
+  // Clear favorites and re-read
+  f.store.set('alvidaa_favorites', []);
+  v.readPrefs();
+  assert.equal(v.appItems().length, 2);
+  assert.equal(v.app, 1); // safely clamped from 3 to 1 (Settings)
+  v.stop();
+});
