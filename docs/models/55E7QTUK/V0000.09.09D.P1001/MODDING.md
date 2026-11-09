@@ -73,11 +73,17 @@ page's deltas:
   boot until the network is up (owner mains cycle), then re-trigger the arm
   page — the chain completes on its own. Full failure-state table and playbook
   in [findings/09](findings/09-device-dns-resolver.md).
-- **Tool discrepancy, open:** [`tools/e7qtuk/dropbear-build.sh`](../../../../tools/e7qtuk/dropbear-build.sh)
-  cross-builds for `aarch64-linux-musl`, while this guide's measured gauntlet
+- **Tool arch, aligned 2026-11-09 (build still unverified):**
+  [`tools/e7qtuk/dropbear-build.sh`](../../../../tools/e7qtuk/dropbear-build.sh)
+  used to cross-build `aarch64-linux-musl` while this guide's measured gauntlet
   says the aarch64 build gets ENOEXEC and the **EABI5 armv7** build runs
-  ([findings/05](findings/05-root-ssh.md)). Treat the script as a starting
-  point that needs its target flipped; the working binary was not republished.
+  ([findings/05](findings/05-root-ssh.md)). Its default target is now
+  `arm-linux-musleabihf` — the triple that produced the static resolver
+  binaries measured working on this unit — and it asserts the ELF machine
+  (`ARM`) before staging, so a wrong-arch build fails on the host instead of on
+  the TV. Override with `DROPBEAR_TARGET=aarch64-linux-musl` for a set-top box.
+  The contributor's working armv7 binary was never republished, so treat the
+  first build as a calibration run.
 
 ## Pages and tools on this unit
 
@@ -86,7 +92,7 @@ page's deltas:
 | [`source/`](source/) | the phase-3 pages for this unit (`phase3-arm*.html`, `phase3-dbe*.html`, `phase3-diag*.html`, `phase3-superprobe.html`, `selprobe.html`, `recon-e7qtuk-hook.html`, `hookrearm-e7qtuk.html`) — 41 files, evidence only, not a drop-in lane |
 | `launcher/recon-e7qtuk*.html`, `launcher/hook{install,swap}-e7qtuk.html` | recon ladder and hook experiments, left in `launcher/` because they are served from there |
 | `launcher/selfinstall.html` | the reversible launcher landing point (server-side) |
-| [`tools/e7qtuk/dropbear-build.sh`](../../../../tools/e7qtuk/dropbear-build.sh) | per-model dropbear cross-build (see the arch discrepancy above) |
+| [`tools/e7qtuk/dropbear-build.sh`](../../../../tools/e7qtuk/dropbear-build.sh) | per-model dropbear cross-build (armv7 default; asserts the ELF machine) |
 | [`tools/u7q/scripts/make_min_installer.py`](../../../../tools/u7q/scripts/make_min_installer.py) | shared IPK builder carrying this unit's `dns` and `adsfw` stages (`re.installer` 1.0.4) |
 | [`tools/u7q/scripts/build_dnsmasq.sh`](../../../../tools/u7q/scripts/build_dnsmasq.sh) | zig crossbuild for the static armv7 resolver |
 | [`tools/u7q/web/`](../../../../tools/u7q/web/) | `install.html` / `trigger.html` / `rearm.html` + local server for the page lane |
