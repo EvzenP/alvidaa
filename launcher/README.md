@@ -64,7 +64,7 @@ These are different products, not variants of one file. Do not merge them.
 | Lane | Where | State |
 | --- | --- | --- |
 | **Canvas launcher** (Lane 1) | `index.html` here | **live** — browser page served by the on-TV bridge, watcher bounce, no root needed |
-| **Native** (Lane 3) | `tools/launcher-host/` — see [IMPLEMENTATIONS.md](../tools/launcher-host/IMPLEMENTATIONS.md) | **proven on two units** — replaces only `route[0].component` for `/Launcher` inside the writable vendor bundle; no bounce, no browser, stock Settings and key dispatch preserved. Two community implementations live there (Free My TV generic, and a 75U8QTUK port); our own design is written and unverified (#35) |
+| **Native** (Lane 3) | `tools/launcher-host/` — see [IMPLEMENTATIONS.md](../tools/launcher-host/IMPLEMENTATIONS.md) | **proven on three units** — replaces only `route[0].component` for `/Launcher` inside the writable vendor bundle; no bounce, no browser, stock Settings and key dispatch preserved. Two community implementations live there (Free My TV generic, and a 75U8QTUK port), plus our own design, installed and rendering on the reference unit (#35) |
 
 The rule that keeps this clean: **a new launcher is a lane, not a file.** If it
 shares the canvas page's data path, it is a change to `index.html`. If it runs

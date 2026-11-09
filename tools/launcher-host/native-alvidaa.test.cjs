@@ -292,9 +292,9 @@ test('build refuses an unpinned stock bundle and assembles a runnable candidate'
   const stock = '/* private vendor bundle */\nself._V_M_ = { launcher: function () { return { route: [{ path: "/Launcher", component: {} }] }; } };\n';
   fs.writeFileSync(stockFile, stock);
   const digest = hash(Buffer.from(stock));
-  assert.throws(() => build(stockFile, '', null), /expected sha256/);
-  assert.throws(() => build(stockFile, '0'.repeat(64), null), /does not match/);
-  const candidate = build(stockFile, digest, null);
+  assert.throws(() => build(stockFile, null, ''), /expected sha256/);
+  assert.throws(() => build(stockFile, null, '0'.repeat(64)), /does not match/);
+  const candidate = build(stockFile, null, digest);
   assert.ok(candidate.startsWith('/* ' + MARKER));
   assert.ok(candidate.includes(stock));
   for (const part of PARTS) assert.ok(candidate.includes(part));
@@ -307,7 +307,7 @@ test('build refuses an unpinned stock bundle and assembles a runnable candidate'
   assert.equal(typeof context.AlvidaaNativeHome, 'function');
   assert.equal(context.AlvidaaNativeComponent, context.AlvidaaNativeHome);
   assert.equal(context._V_M_.launcher().route[0].component.name, 'Launcher');
-  assert.throws(() => build(stockFile, digest, path.join(__dirname, 'candidate.js')),
+  assert.throws(() => build(stockFile, path.join(__dirname, 'candidate.js'), digest),
     /must stay private/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

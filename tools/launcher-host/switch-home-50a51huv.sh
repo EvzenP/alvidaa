@@ -6,6 +6,10 @@
 #   - the launcher bundle lives at /APPS/channelA/operation-ui/...
 #   - app.js is 305:305 mode 0755 (not 305:909 / 0640)
 #   - the cache is /var/local/hisenseUI/cobalt_home/.cache/cobalt
+#   - **APM supervises the launcher** (`[launcher]` in
+#     /usr/local/etc/apm/application-config-na-sa.ini: isKeepAlive = true,
+#     restore_time_when_crash = 10). So the restart is: kill, mutate while it
+#     is down, then let APM bring it back. secure_exec is only a fallback.
 #
 # Run detached, as root, over the SSH lane. /var/local is mounted seclabel,
 # so a direct shebang exec fails ("bad interpreter: Permission denied"):
@@ -16,7 +20,9 @@
 # MODES:
 #   status    print the current bundle hash and engine pid; changes nothing
 #   dry       stock-only restart; no file or cache changes (the gate)
-#   install   atomic launcher swap + JS-cache reset, then restart
+#   install   stock -> candidate: atomic swap + JS-cache reset, then restart
+#   switch    candidate -> another candidate: same swap, keeps the stock backup
+#             and the original cache backup intact, so rollback still works
 #   rollback  restore stock app.js + JS-cache, then restart
 #
 # Teardown: MODE=rollback restores everything. Files are written only under
@@ -59,6 +65,35 @@ live_engine() {
   printf '%s\n' "$*"
 }
 
+stop_engine() {
+  pids=$(live_engine)
+  [ -n "$pids" ] || return 0
+  /bin/kill -TERM $pids 2>/dev/null
+  i=0
+  while [ "$i" -lt 20 ]; do
+    [ -z "$(live_engine)" ] && return 0
+    /bin/sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+wait_engine() {
+  limit=${1:-30}
+  i=0
+  while [ "$i" -lt "$limit" ]; do
+    p=$(live_engine)
+    if [ -n "$p" ]; then
+      set -- $p
+      printf '%s\n' "$1"
+      return 0
+    fi
+    /bin/sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 if [ "$MODE" = status ]; then
   printf 'app.js md5 %s\n' "$(md5of "$APP")"
   printf 'stock md5  %s\n' "$STOCK_MD5"
@@ -80,6 +115,11 @@ case "$MODE" in
     [ -f "$BACKUP/app.js.stock" ] || fail "stock backup missing"
     [ ! -e "$BACKUP/compiled_js" ] || fail "cache backup already present"
     ;;
+  switch)
+    [ "$(md5of "$CANDIDATE")" = "$CANDIDATE_MD5" ] || fail "candidate hash mismatch"
+    [ -f "$BACKUP/app.js.stock" ] || fail "stock backup missing"
+    [ -d "$BACKUP/compiled_js" ] || fail "no stock cache backup; run install first"
+    ;;
   rollback)
     [ -f "$BACKUP/app.js.stock" ] || fail "stock backup missing"
     ;;
@@ -90,40 +130,33 @@ old=$(live_engine)
 set -- $old
 old=$1
 [ -n "$old" ] && [ -r "/proc/$old/environ" ] || fail "no live engine to capture"
-
 creds_before=$(/bin/grep -E '^(Uid|Gid|Groups|CapEff):' "/proc/$old/status")
 /bin/cat "/proc/$old/environ" > "$ENVF" || fail "cannot capture engine env"
 printf '\0' >> "$ENVF"
 log "captured env from pid=$old"
 
-/bin/kill -TERM $old 2>/dev/null
-
-i=0
-while [ "$i" -lt 20 ]; do
-  [ -z "$(live_engine)" ] && break
-  /bin/sleep 1
-  i=$((i + 1))
-done
-if [ -n "$(live_engine)" ]; then
-  fail "SIGTERM did not clear hisenseUI; refusing to launch a second engine"
-fi
-log "engine stopped (wait ${i}s)"
+stop_engine || fail "SIGTERM did not clear hisenseUI; refusing to launch a second engine"
+log "engine stopped"
 
 # Mutate files only while the UI engine is down (55A7KAU lesson).
-if [ "$MODE" = install ]; then
+if [ "$MODE" = install ] || [ "$MODE" = switch ]; then
   tmp="$APP.alvidaa-tmp"
   /bin/cp "$CANDIDATE" "$tmp" || fail "cannot stage candidate"
   /bin/chown 305:305 "$tmp" || fail "cannot set owner 305:305"
   /bin/chmod 0755 "$tmp" || fail "cannot set mode 0755"
   /bin/mv -f "$tmp" "$APP" || fail "cannot install candidate"
   for d in compiled_js uncompiled_js; do
-    /bin/mv "$CACHE/$d" "$BACKUP/$d" || fail "cannot back up $d"
+    if [ "$MODE" = install ]; then
+      /bin/mv "$CACHE/$d" "$BACKUP/$d" || fail "cannot back up $d"
+    else
+      /bin/rm -rf "$CACHE/$d" || fail "cannot clear $d"
+    fi
     /bin/mkdir "$CACHE/$d" || fail "cannot recreate $d"
     /bin/chown 311:311 "$CACHE/$d" || fail "cannot own $d"
     /bin/chmod 0751 "$CACHE/$d" || fail "cannot chmod $d"
   done
-  printf '%s\n' installed > "$DIR/phase"
-  log "installed candidate; JS cache dirs reset (originals in $BACKUP)"
+  printf '%s\n' "$MODE" > "$DIR/phase"
+  log "$MODE complete; JS cache dirs reset"
 elif [ "$MODE" = rollback ]; then
   tmp="$APP.alvidaa-tmp"
   /bin/cp -p "$BACKUP/app.js.stock" "$tmp" || fail "cannot stage stock app.js"
@@ -142,12 +175,17 @@ elif [ "$MODE" = rollback ]; then
   log "restored stock app.js and JS cache dirs"
 fi
 
-respawned=$(live_engine)
-if [ -n "$respawned" ]; then
-  log "INFO engine respawned without our launch: $respawned"
-else
-  # Detached launch. The subshell ignores HUP so the engine survives the SSH
-  # session closing; env is the captured vendor environment.
+# An engine that appeared while we were swapping may have loaded the old file.
+if [ -n "$(live_engine)" ]; then
+  log "engine appeared during the swap; stopping it once more"
+  stop_engine || fail "could not clear the engine that appeared during the swap"
+fi
+
+# APM restores the launcher after a crash, not after a clean SIGTERM, so this
+# is a short courtesy wait before the real restart path.
+new=$(wait_engine 5)
+if [ -z "$new" ]; then
+  log "APM did not restore the engine; launching through secure_exec"
   (
     cd /opt/hisenseUI || exit 1
     while IFS= read -r -d '' item; do
@@ -157,25 +195,13 @@ else
     exec /usr/local/bin/secure_exec hisenseUI /opt/hisenseUI/startgui.sh \
       >/dev/null 2>&1 </dev/null
   ) >/dev/null 2>&1 </dev/null &
-  log "launched secure_exec hisenseUI (bg pid $!)"
+  new=$(wait_engine) || fail "engine did not start; SSH stays up, retry launch manually"
 fi
-
-i=0
-new=""
-while [ "$i" -lt 40 ]; do
-  new=$(live_engine)
-  [ -n "$new" ] && [ "$new" != "$old" ] && break
-  /bin/sleep 1
-  i=$((i + 1))
-done
-set -- $new
-new=$1
-[ -n "$new" ] || fail "engine did not start within ${i}s; SSH stays up, retry launch manually"
 
 printf '%s\n' -1000 > "/proc/$new/oom_score_adj" 2>/dev/null || true
 creds_after=$(/bin/grep -E '^(Uid|Gid|Groups|CapEff):' "/proc/$new/status")
 [ "$creds_after" = "$creds_before" ] || log "WARN restarted credentials differ"
 ppid=$(/bin/grep '^PPid:' "/proc/$new/status" | /bin/sed 's/[^0-9]*//g')
-log "OK mode=$MODE old=$old new=$new ppid=$ppid wait=${i}s"
+log "OK mode=$MODE old=$old new=$new ppid=$ppid"
 log "app.js md5 now $(md5of "$APP")"
 printf '%s\n' "OK mode=$MODE new=$new" > "$DONE"

@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "note": "Per-build facts the installer needs. A model profile is only useful once its stock bundle has been pinned and its switch script has run a dry gate on real hardware.",
+  "models": {
+    "50a51huv": {
+      "name": "50A51HUV / 09.01O.P0813",
+      "app": "/APPS/channelA/operation-ui/apps/launcher/js/app.js",
+      "state": "/var/local/alvidaa/native-home",
+      "switch": "switch-home-50a51huv.sh",
+      "local_stock": "firmware/50a51huv/operationui/apps/launcher/js/app.js",
+      "stock_md5": "2f175841081b9c20efd03c0c38b5b839",
+      "stock_sha256": "dc9836fed00d02a2b7399fd3b3daeba1f7d324a47431ccfa1a551ac5487ac01e",
+      "engine": "hisenseUI",
+      "owner": "305:305",
+      "mode": "0755",
+      "supervisor": "APM restores on crash only; restart goes through secure_exec"
+    },
+    "75u8qtuk": {
+      "name": "75U8QTUK / V0000.09.60I.Q0813",
+      "app": "/APPS/pkgs/tv.vidaa.app.operationui/CHA/apps/launcher/js/app.js",
+      "state": "/var/local/alvidaa",
+      "switch": "switch-home-75u8qtuk.sh",
+      "local_stock": "firmware/75u8qtuk/operationui/apps/launcher/js/app.js",
+      "stock_md5": "46bdee5a72955cda19fd361bf2954f80",
+      "stock_sha256": "380d337ecbfa08487768b18cb8342630db1c2880c6e6c14811e6f7d1c72f2c8f",
+      "engine": "SystemUI",
+      "owner": "305:909",
+      "mode": "0640",
+      "supervisor": "no APM respawn; the switch script launches explicitly"
+    }
+  }
+}

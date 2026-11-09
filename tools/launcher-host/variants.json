@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "note": "Lane-3 variants. One component per build. A variant is only listed as verified on the builds it has actually run on; the installer refuses an unverified pairing unless --force is passed.",
+  "variants": [
+    {
+      "id": "free-my-tv",
+      "name": "Free My TV",
+      "author": "JacksonDCollins",
+      "summary": "Offline clock and shelf, favorites, stock TV Settings. The generic build.",
+      "build": "build-native.cjs",
+      "parts": ["native-platform.js", "free-my-tv-native.js", "native-entry.js"],
+      "license": "third-party/free-my-tv/LICENSE",
+      "verified": [
+        { "model": "55A7KAU", "firmware": "V0000.09.09O.P1015" },
+        { "model": "50A51HUV", "firmware": "09.01O.P0813" }
+      ]
+    },
+    {
+      "id": "alvidaa",
+      "name": "alvidaa",
+      "author": "carteakey",
+      "summary": "Inputs dock at the bottom edge, the focused input's name in large type, one Apps tile opening an overlay, stock TV Settings.",
+      "build": "build-native-alvidaa.cjs",
+      "parts": ["native-platform.js", "native-alvidaa.js", "native-entry.js"],
+      "verified": [
+        { "model": "50A51HUV", "firmware": "09.01O.P0813" }
+      ]
+    },
+    {
+      "id": "free-my-tv-75u8qtuk",
+      "name": "Free My TV (75U8QTUK port)",
+      "author": "Kingpandacc",
+      "summary": "The Free My TV design with the 75U8QTUK SDK contracts and vidaahub icons.",
+      "build": "build-native-75u8qtuk.cjs",
+      "parts": ["native-platform-75u8qtuk.js", "free-my-tv-native.js", "free-my-tv-native-75u8qtuk.js", "native-entry.js"],
+      "license": "third-party/free-my-tv/LICENSE",
+      "verified": [
+        { "model": "75U8QTUK", "firmware": "V0000.09.60I.Q0813" }
+      ]
+    }
+  ]
+}

@@ -25,14 +25,15 @@
       ],
       "capabilities": {
         "pairing": "working",
-        "launcher": "working",
+        "launcher": "working (canvas lanes 1/2; native lane 3 owner-confirmed 2026-11-09 with Free My TV generic)",
         "file_bridge_traversal": "open",
         "file_bridge_write": "open",
         "identity_gate": "n-a",
         "euladpp_untar": "armed",
         "devtools_forge": "working",
         "root": "achieved",
-        "notes": "reference unit — full chain documented in findings 03-07"
+        "notes": "reference unit - full chain documented in findings 03-07. Native Home: findings 13. The writable UI module is /APPS/channelA/operation-ui, not pkgs/tv.vidaa.app.operationui; this build uses the generic SDK contract (getCurrentShowApps, open settings with vk T). APM supervises the launcher but only restores on a crash, so restarts go through secure_exec.",
+        "native_home": "working (Free My TV generic, owner-confirmed 2026-11-09; Inputs/Settings/app launch not yet exercised)"
       }
     },
     {

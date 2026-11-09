@@ -20,9 +20,9 @@ const PARTS = [
   'native-entry.js'
 ];
 
-function build(stockFile, output) {
+function build(stockFile, output, expect = STOCK_HASH) {
   const stock = fs.readFileSync(stockFile);
-  assert.equal(hash(stock), STOCK_HASH, 'wrong 75U8QTUK stock launcher revision');
+  assert.equal(hash(stock), expect, 'wrong 75U8QTUK stock launcher revision');
   const license = fs.readFileSync(path.join(__dirname, 'third-party/free-my-tv/LICENSE'), 'utf8');
   const candidate = '/* ALVIDAA_FREE_MY_TV_NATIVE_75U8QTUK_V1\n' + license + '\n*/\n' +
     stock + '\n;\n' +
@@ -41,10 +41,10 @@ function build(stockFile, output) {
 }
 
 if (require.main === module) {
-  const [stock, output] = process.argv.slice(2);
+  const [stock, output, expect] = process.argv.slice(2);
   assert.ok(stock && output,
-    'Usage: build-native-75u8qtuk.cjs private-stock.js private-output.js');
-  const candidate = build(stock, output);
+    'Usage: build-native-75u8qtuk.cjs private-stock.js private-output.js [expected-sha256]');
+  const candidate = build(stock, output, expect || STOCK_HASH);
   const buf = Buffer.from(candidate);
   console.log('Built 75U8QTUK native candidate: ' + buf.length + ' bytes; sha256 ' + hash(buf));
 }

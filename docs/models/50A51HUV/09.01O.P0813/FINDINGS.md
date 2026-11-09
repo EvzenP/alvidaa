@@ -24,6 +24,7 @@ generated [exploit and method inventory](../../../research/EXPLOITS.md).
 | [10-patched-firmware-playbook.md](../../../research/10-patched-firmware-playbook.md) | The consolidated lane map for 09.60V/MTK9603-class firmware (traversal closed): generation status table, primitives, candidate chains ranked, open questions. Community-maintained — PR your probe results. |
 | [11-firmware-notes.md](findings/11-firmware-notes.md) | Firmware notes: the dynamic domain map (evt/jrnl/ads endpoints, DoH evasion via dns.google), on-box tooling, JS service inventory, package-manager metadata, the euladpp consent plane, loose ends. |
 | [12-overlay-and-cobalt-runtime.md](findings/12-overlay-and-cobalt-runtime.md) | Cobalt runtime and overlay traps: `sdk.js` is load-bearing (append-only mods only), Starboard drops tags after `</html>`, XHR CORS-preflight deadlock (WebSocket-only), the Dropbear reboot hang, the boot-time network race, and the canvas verdict: this Cobalt build has no `HTMLCanvasElement` at all — home-engine canvas overlays are impossible; the launcher renders in odin via the watcher bounce. |
+| [13-native-home.md](findings/13-native-home.md) | Native Home in the `channelA/operation-ui` module: the generic SDK contract on this build, APM supervising the launcher (crash-only restore), the `pidof` trap, the watcher conflict, and the install/rollback script. Owner-confirmed live 2026-11-09. |
 
 ## Status snapshot (Oct 30)
 

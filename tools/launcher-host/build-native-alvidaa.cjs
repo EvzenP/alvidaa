@@ -13,7 +13,7 @@ const { hash } = require('./native-trial.cjs');
 const PARTS = ['native-platform.js', 'native-alvidaa.js', 'native-entry.js'];
 const MARKER = 'ALVIDAA_NATIVE_HOME_V1';
 
-function build(stockFile, expect, output) {
+function build(stockFile, output, expect = STOCK_HASH) {
   assert.match(String(expect || ''), /^[0-9a-f]{64}$/,
     'expected sha256 of the stock bundle is required');
   const stock = fs.readFileSync(stockFile);
@@ -34,10 +34,10 @@ function build(stockFile, expect, output) {
 }
 
 if (require.main === module) {
-  const [stock, expect, output] = process.argv.slice(2);
-  assert.ok(stock && expect && output,
-    'Usage: build-native-alvidaa.cjs private-stock.js <expected-sha256> private-output.js');
-  const candidate = build(stock, expect, output);
+  const [stock, output, expect] = process.argv.slice(2);
+  assert.ok(stock && output && expect,
+    'Usage: build-native-alvidaa.cjs private-stock.js private-output.js <expected-sha256>');
+  const candidate = build(stock, output, expect);
   console.log('Built alvidaa native candidate: ' + Buffer.byteLength(candidate) +
     ' bytes; sha256 ' + hash(candidate));
 }

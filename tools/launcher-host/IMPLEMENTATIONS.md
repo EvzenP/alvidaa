@@ -6,7 +6,8 @@ screen instead of a browser page. No bounce, no watcher, no server on the TV.
 
 This directory holds every lane-3 implementation. It is one directory on
 purpose: the route swap, the SDK adapters and the rollback discipline are
-shared, and only the design and the per-build constants differ.
+shared, and only the design and the per-build constants differ. To pick one and
+put it on a TV, see [VARIANTS.md](VARIANTS.md).
 
 ## What is here
 
@@ -14,7 +15,7 @@ shared, and only the design and the per-build constants differ.
 | --- | --- | --- | --- | --- |
 | **Free My TV** (generic) | [@JacksonDCollins](https://github.com/JacksonDCollins) | 55A7KAU / `09.09O.P1015` | `free-my-tv-native.js`, `native-web-*.js`, `build-native-web.cjs` | merged, owner-verified on that unit |
 | **Free My TV** (75U8QTUK port) | [@Kingpandacc](https://github.com/Kingpandacc) | 75U8QTUK / `09.60I.Q0813` | `free-my-tv-native-75u8qtuk.js`, `native-platform-75u8qtuk.js`, `build-native-75u8qtuk.cjs` | merged, owner-verified on that unit |
-| **alvidaa design** | this repo | any build with the writable bundle | `native-alvidaa.js`, `native-platform.js`, `build-native-alvidaa.cjs` | written, **unverified on hardware**; see [NATIVE-ALVIDAA.md](NATIVE-ALVIDAA.md) and issue #35 |
+| **alvidaa design** | this repo | any build with the writable bundle | `native-alvidaa.js`, `native-platform.js`, `build-native-alvidaa.cjs` | **installed and rendering** on 50A51HUV / `09.01O.P0813` (2026-11-09); input switch, apps overlay and Settings pending. See [NATIVE-ALVIDAA.md](NATIVE-ALVIDAA.md) and issue #35 |
 
 Both Free My TV variants are the same product: an offline clock-and-shelf home
 that lists apps and inputs through the vendor SDK and opens the real stock
@@ -54,6 +55,7 @@ Every implementation in this directory uses these:
 3. **Pin the stock file before editing.** Size, owner, mode, md5 and sha256, copied somewhere private. The 75U8QTUK findings show the shape.
 4. **Write the rollback first.** These implementations replace a vendor file. If the rollback is not written down before the first write, it is not reversible.
 5. **Label it unverified** until it has run on hardware. Nothing in this directory is verified by tests alone.
+6. **Register it in `variants.json`** with an empty `verified` list, then add the builds it has actually run on. The installer refuses an unverified pairing. See [VARIANTS.md](VARIANTS.md).
 
 ## What lane 3 is not
 
