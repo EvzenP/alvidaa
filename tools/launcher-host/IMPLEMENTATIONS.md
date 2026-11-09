@@ -14,7 +14,7 @@ shared, and only the design and the per-build constants differ.
 | --- | --- | --- | --- | --- |
 | **Free My TV** (generic) | [@JacksonDCollins](https://github.com/JacksonDCollins) | 55A7KAU / `09.09O.P1015` | `free-my-tv-native.js`, `native-web-*.js`, `build-native-web.cjs` | merged, owner-verified on that unit |
 | **Free My TV** (75U8QTUK port) | [@Kingpandacc](https://github.com/Kingpandacc) | 75U8QTUK / `09.60I.Q0813` | `free-my-tv-native-75u8qtuk.js`, `native-platform-75u8qtuk.js`, `build-native-75u8qtuk.cjs` | merged, owner-verified on that unit |
-| **alvidaa design** | unbuilt | any | — | not started, see issue #35 |
+| **alvidaa design** | this repo | any build with the writable bundle | `native-alvidaa.js`, `native-platform.js`, `build-native-alvidaa.cjs` | written, **unverified on hardware**; see [NATIVE-ALVIDAA.md](NATIVE-ALVIDAA.md) and issue #35 |
 
 Both Free My TV variants are the same product: an offline clock-and-shelf home
 that lists apps and inputs through the vendor SDK and opens the real stock
@@ -41,7 +41,7 @@ Every implementation in this directory uses these:
 
 | File | What it does |
 | --- | --- |
-| `native-entry.js` | the route swap: wraps the stock launcher factory and replaces one route component |
+| `native-entry.js` | the route swap: wraps the stock launcher factory and replaces one route component. It takes the variant from `AlvidaaNativeComponent` and falls back to `AlvidaaFreeMyTV`, so one entry serves every implementation |
 | `native-platform.js` | the SDK adapter. Contracts differ per build, so this is the file that gets a sibling when a new build arrives |
 | `native-home.cjs`, `native-launcher.js` | the component scaffolding and the shared view logic |
 | `native-trial.cjs`, `stock-ui-restart.cjs` | the reversible trial: install, verify, restore |
@@ -49,7 +49,7 @@ Every implementation in this directory uses these:
 
 ## Adding an implementation
 
-1. **Do not fork the directory.** Add a per-build adapter (`native-platform-<model>.js`) and a build script, and reuse `native-entry.js` and the trial machinery.
+1. **Do not fork the directory.** Add a per-build adapter (`native-platform-<model>.js`) and a build script, and reuse `native-entry.js` and the trial machinery. A new component sets `root.AlvidaaNativeComponent` so the shared entry picks it up; one component per build.
 2. **Read `docs/models/<model>/<firmware>/findings/09-native-home.md`** for the build you are targeting. The 75U8QTUK one is the canonical write-up of the approach: what to pin before touching anything, which route to replace, and what the SDK contracts look like there.
 3. **Pin the stock file before editing.** Size, owner, mode, md5 and sha256, copied somewhere private. The 75U8QTUK findings show the shape.
 4. **Write the rollback first.** These implementations replace a vendor file. If the rollback is not written down before the first write, it is not reversible.

@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+'use strict';
+// Build the alvidaa native Home candidate: private stock bundle + our parts.
+//
+// The stock bundle is vendor code and never enters the repo, so the expected
+// sha256 is a required argument. A build that cannot state which revision it
+// targets is a build that cannot be rolled back safely.
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const { hash } = require('./native-trial.cjs');
+const PARTS = ['native-platform.js', 'native-alvidaa.js', 'native-entry.js'];
+const MARKER = 'ALVIDAA_NATIVE_HOME_V1';
+
+function build(stockFile, expect, output) {
+  assert.match(String(expect || ''), /^[0-9a-f]{64}$/,
+    'expected sha256 of the stock bundle is required');
+  const stock = fs.readFileSync(stockFile);
+  assert.equal(hash(stock), expect, 'stock bundle does not match the pinned revision');
+  const candidate = '/* ' + MARKER + '\n * variant: native-alvidaa.js\n */\n' + stock + '\n;\n' +
+    PARTS.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n;\n');
+  new vm.Script(candidate, { filename: 'native-candidate.js' });
+  if (output) {
+    const target = path.resolve(output);
+    const privateRoot = path.resolve(__dirname, '../../firmware') + path.sep;
+    assert.ok(target.startsWith(privateRoot) || target.startsWith('/tmp/'),
+      'vendor-containing output must stay private');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, candidate, { mode: 0o600 });
+    fs.chmodSync(target, 0o600);
+  }
+  return candidate;
+}
+
+if (require.main === module) {
+  const [stock, expect, output] = process.argv.slice(2);
+  assert.ok(stock && expect && output,
+    'Usage: build-native-alvidaa.cjs private-stock.js <expected-sha256> private-output.js');
+  const candidate = build(stock, expect, output);
+  console.log('Built alvidaa native candidate: ' + Buffer.byteLength(candidate) +
+    ' bytes; sha256 ' + hash(candidate));
+}
+module.exports = { build, PARTS, MARKER };

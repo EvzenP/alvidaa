@@ -41,7 +41,7 @@ where the daemon runs; lane 3 is a different implementation.
 | --- | --- | --- | --- |
 | **1. Bridge on a Pi or NAS** | a Go daemon on another box, plus a watcher that bounces the TV to it | no | **live.** The one most people should use, because it works without root |
 | **2. Bridge on the TV** | the same daemon on the TV's loopback, kept alive by the root hook | yes | **live** on the reference unit. No external hardware, no bounce target to lose |
-| **3. Native** | a component inside the vendor home engine | yes | **proven on two community units**, our own design unbuilt ([#35](https://github.com/carteakey/alvidaa/issues/35)) |
+| **3. Native** | a component inside the vendor home engine | yes | **proven on two community units**, our own design written and unverified ([#35](https://github.com/carteakey/alvidaa/issues/35)) |
 
 ```
 LANE 1 — bridge elsewhere (no root)
