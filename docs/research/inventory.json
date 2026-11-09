@@ -379,7 +379,7 @@
       "browser": "Chromium 111 \"odin\"",
       "build_date": "2025-09-30",
       "tested_by": [
-        "community"
+        "gh:gitgost-sa2"
       ],
       "capabilities": {
         "pairing": "working",

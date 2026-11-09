@@ -174,7 +174,7 @@ both regenerate from `docs/research/inventory.json`.
 | 55A7KAU | V0000.09.09O.P1015 | working | achieved + boot-persistent | @owner (this session) |
 | 75U8QTUK | V0000.09.60I.Q0813 (UK) | working | ACHIEVED 2026-11-06 | [@kingpandacc](https://github.com/kingpandacc) |
 | 43A5LE | V0000.09.60A.Q0707 | working | untested | [@antmagl](https://github.com/antmagl) |
-| 43A5FE | V0010.09.09A.P0930 | working | achieved | @community |
+| 43A5FE | V0010.09.09A.P0930 | working | achieved | [@gitgost-sa2](https://github.com/gitgost-sa2) |
 | 55E7QTUK | V0000.09.09D.P1001 (UK) | working | achieved + boot-persistent | [@damiennnnn](https://github.com/damiennnnn) |
 | 32A35HUV | V0000.09.01O.P0814 | working | achieved | [@EmoFa](https://github.com/EmoFa) |
 | 50A7HAU | V0000.06.12X.N1212 | untested | untested | [@gonzule](https://github.com/gonzule) |
@@ -191,12 +191,30 @@ both regenerate from `docs/research/inventory.json`.
 <a href="https://github.com/ryjr2ddznn-lab" title="ryjr2ddznn-lab — 43E7DS / 43Q60SEVS, MTK9603"><img src="https://github.com/ryjr2ddznn-lab.png?size=96" width="56" height="56" alt="ryjr2ddznn-lab"></a>
 <a href="https://github.com/MewX" title="MewX — 65U8HAU / V0000.06.29X.P0813, MTK9900 (VIDAA U6)"><img src="https://github.com/MewX.png?size=96" width="56" height="56" alt="MewX"></a>
 <a href="https://github.com/damiennnnn" title="damiennnnn — 55E7QTUK / V0000.09.09D.P1001, MTK9603 (boot-persistent root + ad removal)"><img src="https://github.com/damiennnnn.png?size=96" width="56" height="56" alt="damiennnnn"></a>
+<a href="https://github.com/JacksonDCollins" title="JacksonDCollins — the lane-3 scaffold (native-entry.js, route swap) and Free My TV native Home on the 55A7KAU"><img src="https://github.com/JacksonDCollins.png?size=96" width="56" height="56" alt="JacksonDCollins"></a>
+<a href="https://github.com/Kingpandacc" title="Kingpandacc — 75U8QTUK native DOM Home, and the write-up the lane-3 approach is learned from"><img src="https://github.com/Kingpandacc.png?size=96" width="56" height="56" alt="Kingpandacc"></a>
+<a href="https://github.com/EmoFa" title="EmoFa — 32A35HUV / V0000.09.01O.P0814, a second MTK9602 board"><img src="https://github.com/EmoFa.png?size=96" width="56" height="56" alt="EmoFa"></a>
+<a href="https://github.com/antmagl" title="antmagl — 43A5LE / V0000.09.60A.Q0707, launcher lane"><img src="https://github.com/antmagl.png?size=96" width="56" height="56" alt="antmagl"></a>
+<a href="https://github.com/gonzule" title="gonzule — 50A7HAU / V0000.06.12X.N1212, read-only fingerprint"><img src="https://github.com/gonzule.png?size=96" width="56" height="56" alt="gonzule"></a>
+<a href="https://github.com/aadnaane" title="aadnaane — 50A6Q / V0000.09.61B.Q0721, the first Novatek and first aarch64 unit"><img src="https://github.com/aadnaane.png?size=96" width="56" height="56" alt="aadnaane"></a>
 </p>
+
+The lane-3 native launcher exists because two people built it independently within
+a day of each other: **JacksonDCollins** landed the scaffold (`native-entry.js`,
+the route swap, `native-home.cjs`) on the 55A7KAU, and **Kingpandacc** documented
+the approach on the 75U8QTUK in
+[findings 09](docs/models/75U8QTUK/V0000.09.60I.Q0813/findings/09-native-home.md).
+Read one, reuse the other. The map is
+[tools/launcher-host/IMPLEMENTATIONS.md](tools/launcher-host/IMPLEMENTATIONS.md).
 
 Community reports: [u/pavanjadhaw](https://reddit.com/user/pavanjadhaw) ·
 [u/possibly_matt](https://reddit.com/user/possibly_matt) ·
 [u/LulzTigre](https://reddit.com/user/LulzTigre) ·
 u/Affectionate-End-601 · u/Wing-Tsit-Chong · u/____dls · u/uzueta
+
+Also [@gitgost-sa2](https://github.com/gitgost-sa2), who submitted the 43A5FE
+guide through an anonymous fork and asked to stay unattributed beyond that. The
+credit is here because the work is theirs, not because we know who they are.
 
 A report without a model and firmware string stays in
 [TESTED-MODELS.md](docs/research/TESTED-MODELS.md) until someone fills in the
