@@ -199,13 +199,10 @@ both regenerate from `docs/research/inventory.json`.
 <a href="https://github.com/aadnaane" title="aadnaane — 50A6Q / V0000.09.61B.Q0721, the first Novatek and first aarch64 unit"><img src="https://github.com/aadnaane.png?size=96" width="56" height="56" alt="aadnaane"></a>
 </p>
 
-The lane-3 native launcher exists because two people built it independently within
-a day of each other: **JacksonDCollins** landed the scaffold (`native-entry.js`,
-the route swap, `native-home.cjs`) on the 55A7KAU, and **Kingpandacc** documented
-the approach on the 75U8QTUK in
-[findings 09](docs/models/75U8QTUK/V0000.09.60I.Q0813/findings/09-native-home.md).
-Read one, reuse the other. The map is
-[tools/launcher-host/IMPLEMENTATIONS.md](tools/launcher-host/IMPLEMENTATIONS.md).
+The native launcher work is thanks to **JacksonDCollins** and **Kingpandacc**, who
+each built one independently. It gives us a framework for interchangeable native
+variants rather than a single blessed implementation: pick one, adapt it to your
+build. See [tools/launcher-host/IMPLEMENTATIONS.md](tools/launcher-host/IMPLEMENTATIONS.md).
 
 Community reports: [u/pavanjadhaw](https://reddit.com/user/pavanjadhaw) ·
 [u/possibly_matt](https://reddit.com/user/possibly_matt) ·
