@@ -35,13 +35,14 @@ What this repo publishes, and what it deliberately does not:[docs/DISCLOSURE.md]
 ## Three ways to run the launcher
 
 Same page, three delivery mechanisms. Lanes 1 and 2 share everything except
-where the daemon runs; lane 3 is a different implementation.
+where the daemon runs. Lane 3 is a separate implementation, and it now has
+three to pick from.
 
 | | Where it runs | Root | State |
 | --- | --- | --- | --- |
 | **1. Bridge on a Pi or NAS** | a Go daemon on another box, plus a watcher that bounces the TV to it | no | **live.** The one most people should use, because it works without root |
 | **2. Bridge on the TV** | the same daemon on the TV's loopback, kept alive by the root hook | yes | **live** on the reference unit. No external hardware, no bounce target to lose |
-| **3. Native** | a component inside the vendor home engine | yes | **proven on two community units**, our own design written and unverified ([#35](https://github.com/carteakey/alvidaa/issues/35)) |
+| **3. Native** | a component inside the vendor home engine | yes | **three implementations to pick from**, all on one scaffold. Start with **Free My TV (generic)**, verified on the 55A7KAU and now the reference unit |
 
 ```
 LANE 1 — bridge elsewhere (no root)
@@ -60,7 +61,7 @@ LANE 2 — bridge on the TV (root)
 
 LANE 3 — native (root)
 
-vendor home engine ─► route[0].component for /Launcher replaced ─► our component
+vendor home engine ─► route[0].component for /Launcher replaced ─► the chosen component
                       (no browser, no bounce, stock Settings preserved)
 ```
 
