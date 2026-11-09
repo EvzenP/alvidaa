@@ -89,6 +89,13 @@
       if (/^https:\/\/([a-z0-9-]+\.)*vidaahub\.com\//i.test(value)) return value;
       return "";
     }
+    function allowedInputArt(value) {
+      if (typeof value !== "string" || !value) return "";
+      if (/^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i.test(value)) {
+        return value;
+      }
+      return "";
+    }
     function readPref(key, fallback) {
       if (!sdk || !sdk.storage || typeof sdk.storage.get !== "function") return fallback;
       try {
@@ -137,6 +144,9 @@
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
           autoSwitchId: null, autoSwitchName: "", autoSwitchAt: 0,
+          activeArt: "", activeArtId: null,
+          outgoingArt: "", outgoingArtId: null,
+          artIncomingOpacity: 1,
           prefs: {
             hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false, favorites: []
           }
@@ -146,7 +156,10 @@
       activated: function () { this.readPrefs(); this.start(); this.routeFocus(); },
       deactivated: function () { this.stop(); },
       beforeDestroy: function () { this.stop(); },
-      watch: { "$route": function () { this.routeFocus(); } },
+      watch: {
+        "$route": function () { this.routeFocus(); },
+        dock: function () { this.syncArt(); }
+      },
       methods: {
         readPrefs: function () {
           this.prefs = {
@@ -196,6 +209,7 @@
               vm.showToast(data.errors.join("; "));
             }
             vm.clamp();
+            vm.syncArt();
             if (firstPayload && vm.prefs && vm.prefs.autoSwitch) {
               var liveSources = vm.sources.filter(signalOf);
               if (liveSources.length === 1) {
@@ -245,6 +259,19 @@
             clearTimeout(this._autoSwitchTimer);
             this._autoSwitchTimer = null;
           }
+          if (this._artTimer) {
+            clearTimeout(this._artTimer);
+            this._artTimer = null;
+          }
+          if (this._artTickTimer) {
+            clearTimeout(this._artTickTimer);
+            this._artTickTimer = null;
+          }
+          this.activeArt = "";
+          this.activeArtId = null;
+          this.outgoingArt = "";
+          this.outgoingArtId = null;
+          this.artIncomingOpacity = 1;
           this.autoSwitchAt = 0;
           this.autoSwitchId = null;
           this.autoSwitchName = "";
@@ -261,6 +288,7 @@
           this.overlay = false;
           this.dock = this.smartIndex();
           this.app = 0;
+          this.syncArt();
         },
         smartIndex: function () {
           for (var i = 0; i < this.sources.length; i++) {
@@ -368,6 +396,52 @@
           if (!text) return;
           this.toast = String(text);
           this.toastUntil = Date.now() + (typeof ms === "number" ? ms : 2500);
+        },
+        syncArt: function () {
+          var artMap = root.AlvidaaNativeInputArt;
+          if (!artMap) {
+            this.activeArt = "";
+            this.activeArtId = null;
+            this.outgoingArt = "";
+            this.outgoingArtId = null;
+            this.artIncomingOpacity = 1;
+            return;
+          }
+          var items = this.dockItems();
+          var focusInput = items[this.dock];
+          var rawArt = focusInput && (artMap[focusInput.sourceId] || artMap[String(focusInput.sourceId)]);
+          var targetArt = allowedInputArt(rawArt);
+          var targetId = focusInput ? String(focusInput.sourceId) : null;
+
+          if (targetId === this.activeArtId && targetArt === this.activeArt) return;
+
+          if (this.activeArt && this.activeArt !== targetArt) {
+            this.outgoingArt = this.activeArt;
+            this.outgoingArtId = this.activeArtId;
+            this.activeArt = targetArt;
+            this.activeArtId = targetId;
+            this.artIncomingOpacity = targetArt ? 0 : 1;
+            if (this._artTickTimer) clearTimeout(this._artTickTimer);
+            if (this._artTimer) clearTimeout(this._artTimer);
+            var vm = this;
+            if (targetArt && typeof setTimeout === "function") {
+              this._artTickTimer = setTimeout(function () {
+                vm.artIncomingOpacity = 1;
+                vm._artTickTimer = null;
+              }, 16);
+            }
+            if (typeof setTimeout === "function") {
+              this._artTimer = setTimeout(function () {
+                vm.outgoingArt = "";
+                vm.outgoingArtId = null;
+                vm._artTimer = null;
+              }, 300);
+            }
+          } else {
+            this.activeArt = targetArt;
+            this.activeArtId = targetId;
+            this.artIncomingOpacity = 1;
+          }
         },
         startAutoSwitch: function (input) {
           if (!input || input.sourceId == null) return;
@@ -493,6 +567,7 @@
                 if (dock.length > 0) {
                   this.dock = 0;
                   this.clamp();
+                  this.syncArt();
                   return true;
                 }
                 return false;
@@ -501,6 +576,7 @@
               if (idx < dock.length) {
                 this.dock = idx;
                 this.clamp();
+                this.syncArt();
                 this.activate();
                 return true;
               }
@@ -526,6 +602,7 @@
             else this.app++;
           } else return false;
           this.clamp();
+          if (this.zone === "dock") this.syncArt();
           return true;
         }
       },
@@ -694,6 +771,38 @@
         } }, nodes);
 
         var wallpaper = root.AlvidaaNativeWallpaper;
+        var artMap = root.AlvidaaNativeInputArt;
+
+        var artLayers = [];
+        if (artMap) {
+          if (this.outgoingArt) {
+            artLayers.push(h("div", {
+              attrs: { "data-input-art": String(this.outgoingArtId), "data-art-layer": "outgoing" },
+              style: {
+                position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+                pointerEvents: "none",
+                backgroundImage: "url(" + JSON.stringify(this.outgoingArt) + ")",
+                backgroundSize: "cover", backgroundPosition: "center",
+                opacity: 1,
+                transition: "opacity 300ms ease-out"
+              }
+            }));
+          }
+          if (this.activeArt) {
+            artLayers.push(h("div", {
+              attrs: { "data-input-art": String(this.activeArtId), "data-art-layer": "incoming" },
+              style: {
+                position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+                pointerEvents: "none",
+                backgroundImage: "url(" + JSON.stringify(this.activeArt) + ")",
+                backgroundSize: "cover", backgroundPosition: "center",
+                opacity: this.artIncomingOpacity,
+                transition: "opacity 300ms ease-out"
+              }
+            }));
+          }
+        }
+
         var layers = [
           wallpaper ? h("div", { style: {
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
@@ -703,7 +812,8 @@
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
             pointerEvents: "none",
             backgroundImage: "linear-gradient(180deg, rgba(56,189,248,0.06), rgba(99,102,241,0.02) 40%, rgba(7,8,12,0) 70%)"
-          } }),
+          } })
+        ].concat(artLayers).concat([
           // Contrast wash so text and tiles stay readable over the wallpaper.
           h("div", { style: {
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
@@ -747,7 +857,7 @@
               }
             }, [text]);
           }())
-        ];
+        ]);
 
         // ---- the app list overlay -----------------------------------------
         if (this.overlay) {

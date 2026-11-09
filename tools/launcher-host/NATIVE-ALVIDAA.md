@@ -80,6 +80,15 @@ When opt-in preference `alvidaa_auto_switch` is enabled in `sdk.storage` (defaul
 - If no inputs or multiple inputs have signal, or if `alvidaa_auto_switch` is false, no countdown starts.
 - The countdown cancels immediately on `stop()`.
 
+### Per-input wallpaper art
+
+Focused inputs can display dedicated backdrop art behind the contrast wash:
+
+- Configured at build time via `self.AlvidaaNativeInputArt`, a map of `sourceId` (string or number) to image URI.
+- `allowedInputArt()` restricts art sources strictly to local files (`file:///...`, `var/local/storeAppIcon/...`, absolute paths) or inline data URIs (`data:image/(png|jpeg|webp);base64,...`). Remote network URLs (including `vidaahub.com`) are rejected.
+- Smooth 300ms opacity cross-fade via two stacked art layers during focus transitions: the outgoing layer fades from 1 to 0 while the incoming layer fades from 0 to 1, driven by the focused `sourceId` with a 300ms cleanup timer.
+- Completely omitted when `self.AlvidaaNativeInputArt` is absent, preserving default background behavior.
+
 ### Icons: local files, then the vendor host
 
 App records are checked in order for `img`, `presetImg`, `icon`, `appIcon`,
@@ -179,5 +188,6 @@ Covers start/stop idempotence, app and input filtering, storage preferences
 absent storage), name precedence, smart focus, dock and overlay navigation,
 Back ownership, action failures, toast HUD timing and expiry, remote number
 hotkeys (0-9), boot auto-switch countdown (firing, cancel, live input guards),
+per-input wallpaper art cross-fade and URL rejection policy,
 render structure and scaling, the entry's variant selection, and the build's
 hash and output guards.

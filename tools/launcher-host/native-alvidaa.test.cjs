@@ -818,3 +818,118 @@ test('auto-switch: cancels on stop()', () => {
   assert.equal(f.timeouts.size, 0);
   v.stop();
 });
+
+test('input art: cross-fades two stacked art layers during transitions and rejects disallowed URLs', () => {
+  const f = setup(), v = f.instance;
+  f.root.AlvidaaNativeInputArt = {
+    0: 'data:image/png;base64,TVARTDATA',
+    HDMI2: 'file:///var/local/storeAppIcon/ps5-art.png',
+    HDMI3: 'https://evil.com/leak.png'
+  };
+  v.start();
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+
+  // Initially focused on dock index 0 (sourceId 0)
+  assert.equal(v.dock, 0);
+  let tree = draw();
+  let flat = flatten(tree);
+  let incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  let outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  assert.ok(incoming, 'incoming art layer is present');
+  assert.equal(outgoing, undefined, 'no outgoing layer on initial paint');
+  assert.equal(incoming.data.attrs['data-input-art'], '0');
+  assert.match(incoming.data.style.backgroundImage, /data:image\/png;base64,TVARTDATA/);
+  assert.equal(incoming.data.style.opacity, 1);
+  assert.equal(incoming.data.style.transition, 'opacity 300ms ease-out');
+
+  // Change focus to dock index 1 (sourceId 'HDMI2') -> triggers cross-fade transition
+  v.dock = 1;
+  v.syncArt();
+  tree = draw();
+  flat = flatten(tree);
+  incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+
+  // At the moment of switch: outgoing opacity 1 and incoming opacity 0
+  assert.ok(incoming, 'incoming layer present during transition');
+  assert.ok(outgoing, 'outgoing layer present during transition');
+  assert.equal(outgoing.data.attrs['data-input-art'], '0');
+  assert.match(outgoing.data.style.backgroundImage, /data:image\/png;base64,TVARTDATA/);
+  assert.equal(outgoing.data.style.opacity, 1, 'outgoing layer stays at opacity 1 during cross-fade');
+  assert.equal(outgoing.data.style.transition, 'opacity 300ms ease-out');
+
+  assert.equal(incoming.data.attrs['data-input-art'], 'HDMI2');
+  assert.match(incoming.data.style.backgroundImage, /ps5-art\.png/);
+  assert.equal(incoming.data.style.opacity, 0, 'incoming layer starts at opacity 0');
+  assert.equal(incoming.data.style.transition, 'opacity 300ms ease-out');
+
+  // Flip incoming opacity on tick
+  assert.ok(v._artTickTimer != null, 'tick timer scheduled');
+  const tickFn = f.timeouts.get(v._artTickTimer);
+  assert.ok(tickFn);
+  tickFn();
+
+  // After the flip: incoming is opacity 1
+  tree = draw();
+  flat = flatten(tree);
+  incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  assert.equal(incoming.data.style.opacity, 1, 'incoming layer flipped to opacity 1');
+  assert.ok(outgoing, 'outgoing layer still present at opacity 1');
+
+  // After 300ms transition timer: outgoing layer is gone
+  assert.ok(v._artTimer != null, 'fade timer scheduled');
+  const fadeFn = f.timeouts.get(v._artTimer);
+  assert.ok(fadeFn);
+  fadeFn();
+
+  tree = draw();
+  flat = flatten(tree);
+  incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  assert.ok(incoming);
+  assert.equal(outgoing, undefined, 'outgoing layer removed after 300ms');
+
+  // Change focus to dock index 2 (sourceId 'HDMI3' with disallowed https URL)
+  v.dock = 2;
+  v.syncArt();
+  tree = draw();
+  flat = flatten(tree);
+  const disallowed = flat.filter(n => n.data && n.data.style && n.data.style.backgroundImage && n.data.style.backgroundImage.includes('evil.com'));
+  assert.equal(disallowed.length, 0, 'disallowed network art emitted no url()');
+
+  // Clear timers
+  for (const fn of f.timeouts.values()) fn();
+
+  // Completely absent art map
+  delete f.root.AlvidaaNativeInputArt;
+  v.dock = 0;
+  v.syncArt();
+  tree = draw();
+  flat = flatten(tree);
+  const absentLayers = flat.filter(n => n.data && n.data.attrs && 'data-input-art' in n.data.attrs);
+  assert.equal(absentLayers.length, 0, 'no art layer rendered when AlvidaaNativeInputArt is absent');
+  v.stop();
+});
+
+test('build script embeds AlvidaaNativeInputArt when present and works unchanged when absent', () => {
+  const { build } = require('./build-native-alvidaa.cjs');
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alvidaa-art-build-'));
+  const stockFile = path.join(dir, 'stock.js');
+  const stock = '/* stock */\nself._V_M_ = { launcher: function () { return { route: [{ path: "/Launcher", component: {} }] }; } };\n';
+  fs.writeFileSync(stockFile, stock);
+  const digest = hash(Buffer.from(stock));
+
+  // Without options: works unchanged, no AlvidaaNativeInputArt
+  const candidatePlain = build(stockFile, null, digest);
+  assert.ok(!candidatePlain.includes('self.AlvidaaNativeInputArt='));
+
+  // With inputArt option: embeds self.AlvidaaNativeInputArt
+  const candidateWithArt = build(stockFile, null, digest, {
+    inputArt: { HDMI1: 'data:image/png;base64,INLINEART' }
+  });
+  assert.ok(candidateWithArt.includes('self.AlvidaaNativeInputArt={"HDMI1":"data:image/png;base64,INLINEART"};'));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
