@@ -64,8 +64,7 @@ These are different products, not variants of one file. Do not merge them.
 | Lane | Where | State |
 | --- | --- | --- |
 | **Canvas launcher** (Lane 1) | `index.html` here | **live** — browser page served by the on-TV bridge, watcher bounce, no root needed |
-| **Native DOM Home** (Lane 2 / R6) | vendor route swap, see `docs/models/75U8QTUK/…/findings/09-native-home.md` | **proven on one unit** — replaces only `route[0].component` for `/Launcher` inside the writable `operation-ui` bundle; no bounce, no browser, stock Settings and key dispatch preserved |
-| **Free My TV** | `tools/launcher-host/` | **merged, unverified here** — a specific product built on the native path (offline clock + shelf, local feed cache) |
+| **Native** (Lane 3) | `tools/launcher-host/` — see [IMPLEMENTATIONS.md](../tools/launcher-host/IMPLEMENTATIONS.md) | **proven on two units** — replaces only `route[0].component` for `/Launcher` inside the writable vendor bundle; no bounce, no browser, stock Settings and key dispatch preserved. Two community implementations live there (Free My TV generic, and a 75U8QTUK port); our own design is unbuilt (#35) |
 
 The rule that keeps this clean: **a new launcher is a lane, not a file.** If it
 shares the canvas page's data path, it is a change to `index.html`. If it runs
