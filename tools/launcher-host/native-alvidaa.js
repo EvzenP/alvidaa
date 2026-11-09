@@ -85,6 +85,43 @@
       if (/^https:\/\/([a-z0-9-]+\.)*vidaahub\.com\//i.test(value)) return value;
       return "";
     }
+    function readPref(key, fallback) {
+      if (!sdk || !sdk.storage || typeof sdk.storage.get !== "function") return fallback;
+      try {
+        var raw = sdk.storage.get(key);
+        if (raw === undefined || raw === null) return fallback;
+        if (typeof raw === "string") {
+          try {
+            var parsed = JSON.parse(raw);
+            return parsed !== undefined && parsed !== null ? parsed : fallback;
+          } catch (_) {
+            return raw;
+          }
+        }
+        return raw;
+      } catch (_) {
+        return fallback;
+      }
+    }
+    function writePref(key, val) {
+      if (!sdk || !sdk.storage || typeof sdk.storage.set !== "function") return;
+      try {
+        sdk.storage.set(key, JSON.stringify(val));
+      } catch (_) {}
+    }
+    function isTruthy(val) {
+      return val === true || val === "true" || val === 1 || val === "1";
+    }
+    function inAppList(list, app) {
+      if (!Array.isArray(list) || !list.length) return false;
+      var id = String(app.appId).toLowerCase();
+      var name = (app.appName || "").trim().toLowerCase();
+      for (var i = 0; i < list.length; i++) {
+        var item = String(list[i]).trim().toLowerCase();
+        if (item === id || (name && item === name)) return true;
+      }
+      return false;
+    }
 
     return {
       name: "Launcher", // The shared shell's keep-alive list uses this name.
@@ -94,24 +131,56 @@
           zone: "dock", dock: 0, app: 0,
           overlay: false, overlayIndex: 0,
           now: new Date(), width: (root && root.innerWidth) || 1920,
-          toast: "", toastUntil: 0
+          toast: "", toastUntil: 0,
+          prefs: {
+            hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false
+          }
         };
       },
       mounted: function () { this.start(); },
-      activated: function () { this.start(); this.routeFocus(); },
+      activated: function () { this.readPrefs(); this.start(); this.routeFocus(); },
       deactivated: function () { this.stop(); },
       beforeDestroy: function () { this.stop(); },
       watch: { "$route": function () { this.routeFocus(); } },
       methods: {
+        readPrefs: function () {
+          this.prefs = {
+            hiddenApps: readPref("alvidaa_hidden_apps", []),
+            onlyApps: readPref("alvidaa_only_apps", []),
+            customNames: readPref("alvidaa_custom_names", {}),
+            lastUsed: readPref("alvidaa_last_used", null),
+            autoSwitch: isTruthy(readPref("alvidaa_auto_switch", false))
+          };
+          if (this._lastData && this._lastData.apps) {
+            this.apps = this.filterApps(this._lastData.apps);
+            this.clamp();
+          }
+        },
+        filterApps: function (apps) {
+          var vm = this;
+          var hidden = vm.prefs && vm.prefs.hiddenApps;
+          var only = vm.prefs && vm.prefs.onlyApps;
+          return (apps || []).filter(function (app) {
+            if (!app || app.appId == null || !text(app.appName)) return false;
+            var aid = String(app.appId);
+            if (aid === "vidaa-home" || aid === "206") return false;
+            if (Array.isArray(only) && only.length) {
+              return inAppList(only, app);
+            }
+            if (Array.isArray(hidden) && hidden.length) {
+              return !inAppList(hidden, app);
+            }
+            return true;
+          });
+        },
         start: function () {
+          this.readPrefs();
           if (this._running) return;
           this._running = true;
           var vm = this;
           this._platform = root.AlvidaaNativePlatform(sdk, function (data) {
-            vm.apps = data.apps.filter(function (app) {
-              return app && app.appId != null && text(app.appName) &&
-                String(app.appId) !== "vidaa-home" && String(app.appId) !== "206";
-            });
+            vm._lastData = data;
+            vm.apps = vm.filterApps(data.apps);
             vm.sources = data.sources.filter(function (input) {
               return input && input.sourceId != null;
             });
@@ -166,9 +235,29 @@
           for (var i = 0; i < this.sources.length; i++) {
             if (signalOf(this.sources[i])) return i;
           }
+          var last = this.prefs && this.prefs.lastUsed;
+          if (last != null && this.sources.length) {
+            var lastStr = String(last);
+            for (var j = 0; j < this.sources.length; j++) {
+              if (String(this.sources[j].sourceId) === lastStr) return j;
+            }
+          }
           return 0;
         },
         sourceName: function (input) {
+          // Custom names override vendor values: sourceId -> name/displayname2/rename.
+          var custom = this.prefs && this.prefs.customNames;
+          if (custom && typeof custom === "object") {
+            var sid = input.sourceId != null ? String(input.sourceId) : "";
+            if (sid && text(custom[sid])) return text(custom[sid]);
+            var keys = [input.name, input.displayname2, input.rename];
+            for (var k = 0; k < keys.length; k++) {
+              var val = text(keys[k]);
+              if (!val) continue;
+              if (text(custom[val.toLowerCase()])) return text(custom[val.toLowerCase()]);
+              if (text(custom[val])) return text(custom[val]);
+            }
+          }
           // Same order as the bridge: the device the TV discovered on the port
           // beats the port label, and a translation id is resolved last.
           var label = text(input.displayname2) || text(input.rename) || text(input.name) ||
@@ -235,6 +324,8 @@
           if (this.zone === "dock") {
             var input = this.dockItems()[this.dock];
             if (!input) return;
+            if (this.prefs) this.prefs.lastUsed = input.sourceId;
+            writePref("alvidaa_last_used", input.sourceId);
             this.showToast("Switching to " + this.sourceName(input) + "…");
             this.run(function () { return vm._platform.changeSource(input.sourceId); });
             return;

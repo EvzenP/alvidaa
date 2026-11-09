@@ -11,7 +11,7 @@ const ENTRY = fs.readFileSync(path.join(__dirname, 'native-entry.js'), 'utf8');
 const KEYS = { HOME: 36, LAUNCHER: 547, SOURCE: 515, KEYPAD_INPUT: 516,
   UP: 38, DOWN: 40, LEFT: 37, RIGHT: 39, ENTER: 13, BACK: 8, RETURN: 461 };
 
-function setup() {
+function setup(options = {}) {
   const calls = [], timers = new Map();
   let next = 0;
   const bodyListeners = new Set();
@@ -23,9 +23,13 @@ function setup() {
       removeEventListener(_name, fn) { bodyListeners.delete(fn); }
     } }
   };
+  const store = new Map(Object.entries(options.storage || {}));
   const sdk = {
     key: { KEYMAP: KEYS },
-    storage: { get: () => undefined, set: () => {} },
+    storage: options.noStorage ? undefined : {
+      get: key => store.get(key),
+      set: (key, val) => { store.set(key, val); calls.push(['storage:set', key, val]); }
+    },
     apc: { CMDMETHOD: { KEY_INPUT_START: 'input' } },
     router: { isCurrentPathEqualTo: () => true }
   };
@@ -68,7 +72,7 @@ function setup() {
   const instance = component.data();
   instance.$route = { query: {} };
   for (const [key, fn] of Object.entries(component.methods)) instance[key] = fn.bind(instance);
-  return { root, sdk, component, instance, calls, timers, notify: () => notify, bodyListeners };
+  return { root, sdk, component, instance, calls, timers, notify: () => notify, bodyListeners, store };
 }
 
 function flatten(tree) {
@@ -409,4 +413,109 @@ test('build refuses an unpinned stock bundle and assembles a runnable candidate'
   assert.throws(() => build(stockFile, path.join(__dirname, 'candidate.js'), digest),
     /must stay private/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('preferences: absent storage falls back safely without error', () => {
+  const f = setup({ noStorage: true }), v = f.instance;
+  v.start();
+  assert.equal(v.apps.length, 2);
+  assert.equal(v.sources.length, 3);
+  assert.equal(v.sourceName(v.sources[0]), 'TV');
+  assert.equal(v.smartIndex(), 0);
+  v.activate();
+  assert.equal(v.prefs.lastUsed, 0);
+  v.stop();
+});
+
+test('preferences: hidden apps removes matching app IDs or names', () => {
+  const f = setup({
+    storage: {
+      alvidaa_hidden_apps: ['1']
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.apps.length, 1);
+  assert.equal(v.apps[0].appId, '2');
+  assert.equal(v.apps[0].appName, 'Plex');
+  v.stop();
+});
+
+test('preferences: hidden apps accepts JSON string in storage and matches names case-insensitively', () => {
+  const f = setup({
+    storage: {
+      alvidaa_hidden_apps: JSON.stringify(['netflix'])
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.apps.length, 1);
+  assert.equal(v.apps[0].appName, 'Plex');
+  v.stop();
+});
+
+test('preferences: only apps allows only matching app IDs or names', () => {
+  const f = setup({
+    storage: {
+      alvidaa_only_apps: ['1']
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.apps.length, 1);
+  assert.equal(v.apps[0].appId, '1');
+  assert.equal(v.apps[0].appName, 'Netflix');
+  v.stop();
+});
+
+test('preferences: custom input names apply in sourceName after stock resolution', () => {
+  const f = setup({
+    storage: {
+      alvidaa_custom_names: {
+        HDMI2: 'PlayStation 5 Pro',
+        0: 'Antenna Live'
+      }
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.sourceName(v.sources[1]), 'PlayStation 5 Pro');
+  assert.equal(v.sourceName(v.sources[0]), 'Antenna Live');
+  assert.equal(v.sourceName(v.sources[2]), 'Fire TV Stick');
+  v.stop();
+});
+
+test('preferences: smartIndex falls back to last-used sourceId when no input has signal and persists on activate', () => {
+  const f = setup({
+    storage: {
+      alvidaa_last_used: 'HDMI2'
+    }
+  }), v = f.instance;
+  v.start();
+  assert.equal(v.smartIndex(), 0);
+  v.sources = [
+    { sourceId: 0, name: 'TV', is_signal: 0 },
+    { sourceId: 'HDMI2', name: 'HDMI2', is_signal: 0 },
+    { sourceId: 'HDMI3', name: 'HDMI3', is_signal: 0 }
+  ];
+  assert.equal(v.smartIndex(), 1);
+
+  v.dock = 2;
+  v.activate();
+  assert.equal(JSON.parse(f.store.get('alvidaa_last_used')), 'HDMI3');
+  assert.equal(v.prefs.lastUsed, 'HDMI3');
+  v.stop();
+});
+
+test('preferences: re-read on activated refreshes apps and smart focus', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(v.apps.length, 2);
+  f.store.set('alvidaa_hidden_apps', ['1']);
+  f.store.set('alvidaa_last_used', 'HDMI2');
+  v.sources = [
+    { sourceId: 0, name: 'TV', is_signal: 0 },
+    { sourceId: 'HDMI2', name: 'HDMI2', is_signal: 0 }
+  ];
+  f.component.activated.call(v);
+  assert.equal(v.apps.length, 1);
+  assert.equal(v.apps[0].appId, '2');
+  assert.equal(v.dock, 1);
+  v.stop();
 });

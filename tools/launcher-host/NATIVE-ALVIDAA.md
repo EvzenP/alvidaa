@@ -82,6 +82,23 @@ If you want zero network access, drop the vidaahub rule in `allowedIcon()`.
 Every app then falls back to its badge, which is the trade the first version
 made.
 
+### Preferences
+
+`native-alvidaa.js` reads preferences backed by `sdk.storage` with safe defaults
+and a no-op fallback when storage is absent. Preferences are loaded during
+`start()` and re-read on `activated()`. Custom names explicitly override
+vendor values (precedence: `sourceId` map -> lowercased trimmed name/label
+map -> `displayname2` -> `rename` -> `name` -> `sourceId` -> i18n translation);
+note that static custom names can go stale if the physical device changes.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `alvidaa_hidden_apps` | array of strings | `[]` | App IDs or names excluded from the apps overlay. |
+| `alvidaa_only_apps` | array of strings | `[]` | Allowlist of app IDs or names; when non-empty, only matching apps are kept. |
+| `alvidaa_custom_names` | object | `{}` | Map of `sourceId` (or input label) to custom display name applied in `sourceName()`. |
+| `alvidaa_last_used` | string / number | `null` | Last activated input `sourceId`, persisted on dock activation and used as `smartIndex()` fallback when no input has signal. |
+| `alvidaa_auto_switch` | boolean | `false` | Opt-in toggle for automatic input switching on boot. |
+
 
 ## Build
 
@@ -133,7 +150,8 @@ rollback and a private copy of the stock bundle.
 node --test tools/launcher-host/native-alvidaa.test.cjs
 ```
 
-Covers start/stop idempotence, app and input filtering, name precedence,
-smart focus, dock and overlay navigation, Back ownership, action failures,
-toast HUD timing and expiry, render structure and scaling, the entry's variant
-selection, and the build's hash and output guards.
+Covers start/stop idempotence, app and input filtering, storage preferences
+(hidden/only apps, custom input names, last-used fallback, absent storage),
+name precedence, smart focus, dock and overlay navigation, Back ownership,
+action failures, toast HUD timing and expiry, render structure and scaling,
+the entry's variant selection, and the build's hash and output guards.
