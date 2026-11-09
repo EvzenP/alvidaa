@@ -22,6 +22,15 @@ day and cold-boot verified (findings 06); teardown in findings/05 and 06.
 > work): fingerprint through boot-persistent root, the ad-block deployment
 > and every teardown were carried out and published by the owner of the TV.
 
+## Companion pages
+
+- [`EVIDENCE.md`](EVIDENCE.md) — the claim ledger: every assertion on this
+  unit with its label, evidence and finding, including the rows that are
+  still UNVERIFIED and the two recorded DEAD ENDS.
+- [`MODDING.md`](MODDING.md) — operational deltas against the sibling
+  `09.09` / superwatch guides, the traps that cost a boot, and where this
+  unit's pages and tools live in the repo.
+
 ## What was measured
 
 | Claim | Evidence | Label |
