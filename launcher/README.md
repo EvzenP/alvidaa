@@ -31,6 +31,11 @@ and switch-service probes, per-model recon variants, network checks. They are
 kept because they document how a result was obtained, and they are **not**
 linked from the launcher. If you are adding a diagnostic, put it here.
 
+## Known impossible, so nobody re-tries it
+
+- **Live input preview.** Hisense's own source menu shows a thumbnail of what is on each HDMI port. That is drawn by the native video pipeline, below anything a web page can reach. The vendor launcher bundle carries no `preview`, `thumbnail` or `snapshot` API. A static per-input logo is the closest we get; a live frame is not available.
+- **Audio capture.** The TV's audio never enters a userspace ALSA stream — every PCM reports `closed` during playback, optical or internal speakers. See `docs/models/50A51HUV/09.01O.P0813/findings/11-firmware-notes.md` §7. This is why librespot (#19) is dead on this model.
+
 ## The three launcher lanes
 
 These are different products, not variants of one file. Do not merge them.
