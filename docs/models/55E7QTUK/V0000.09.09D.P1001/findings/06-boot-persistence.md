@@ -26,7 +26,7 @@ uptime 241 s (fresh boot)
 installer_log.txt mtime 19:52:49 (this boot's postinst run)
 dropbear pid 2479 (fresh; the previous pid 5969 was the pre-reboot session)
 iptables OUTPUT freeze rules: 3 (re-applied by this boot's postinst)
-ssh -p 8008 root@192.168.0.246 → ROOT-OK, Uid 0, CapEff 000001ffffffffff
+ssh -p 8008 root@<tv-ip> → ROOT-OK, Uid 0, CapEff 000001ffffffffff
 ```
 
 No PC touched the TV during that boot — the arm chain runs from the boot's

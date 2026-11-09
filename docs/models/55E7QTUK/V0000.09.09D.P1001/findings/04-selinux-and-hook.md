@@ -107,6 +107,6 @@ and the `jsservice.basic` package exists exactly where the chain needs it:
 - No binaries on the TV, no dropbear, no IPK; `/tmp`,`/:4444` listener
   never received a fetch (killed by the tool sandbox between calls —
   server artifacts for the chain go through the fetcher lane instead).
-  - the launcher server (192.168.0.195:8770) is the only active lane.
+  - the launcher server (<server-ip>:8770) is the only active lane.
 - Root remains **blocked-at-selinux-exec (hook lane)**; the superwatch
   chain is the measured-open continuation (prereqs above).

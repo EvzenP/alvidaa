@@ -7,7 +7,7 @@ Feature Code, UDN, MACs) are kept out of this notebook on purpose.
 
 ## SSDP + the descriptor surface
 
-`tools/ssdp-descriptor.sh` (auto-discover) found the TV at `192.168.0.246`
+`tools/ssdp-descriptor.sh` (auto-discover) found the TV at `<tv-ip>`
 alongside the gateway; two responder descriptors on the TV:
 
 | Endpoint | Contents |
@@ -85,7 +85,7 @@ alongside the gateway; two responder descriptors on the TV:
 `launcher/identity.html` through `/api/open`)
 
 Server = this project's `server/vidaa_server.py` (fresh venv) on
-`192.168.0.195:8770`, MQTT session from the just-minted tokens.
+`<server-ip>:8770`, MQTT session from the just-minted tokens.
 
 - UA: `Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 (KHTML, like
   Gecko) Chrome/111.0.5563.146 Odin/111.5563.5.1 Safari/537.36
@@ -111,8 +111,8 @@ Server = this project's `server/vidaa_server.py` (fresh venv) on
 
 ## State after this session
 
-- Server paired and left running in the background on `192.168.0.195:8770`
-  (`vidaa_server.py 192.168.0.246 8770`), recon reports landing in
+- Server paired and left running in the background on `<server-ip>:8770`
+  (`vidaa_server.py <tv-ip> 8770`), recon reports landing in
   `server/recon-report.json` (gitignored). Kill before other pairing work:
   one MQTT session per credential set.
 - `server/keys/` holds tokens + the Vidaa-app cert pair only (throwaway

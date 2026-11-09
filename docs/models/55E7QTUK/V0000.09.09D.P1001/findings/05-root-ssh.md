@@ -30,7 +30,7 @@ TV browser page (fetcher FaaS, wss://localhost:9888 start + vowOS syncExecute)
                        │   -D /APPS/.re_sshd/root_home/.ssh (per-TV ed25519 key)
                        ├── /APPS/shell whitelist (/bin/sh + /bin/bash)
                        └── accepts 8008 in FIREWALL_IN_EULAON
-                            └─ ssh -i server/keys/e7qtv-root -p 8008 root@192.168.0.246
+                            └─ ssh -i server/keys/e7qtv-root -p 8008 root@<tv-ip>
                                  Uid 0 0 0 0; CapEff 000001ffffffffff
 ```
 

@@ -18,7 +18,7 @@ identifying is committed).
 | --- | --- |
 | `fileRead websdk/Appinfo.json mode 6` | `ret:false`, errno −2 `ENOENT` on `/APPS/websdk/Appinfo.json` — factory-state unit, no web-app registry existed |
 | `fileWrite` (registry with `vidaa-home` entry) | `ret:true`, `"success"` |
-| readback | `ids: ["vidaa-home"]`, `url http://192.168.0.195:8770/` |
+| readback | `ids: ["vidaa-home"]`, `url http://<server-ip>:8770/` |
 | TV restart (mains cycle by owner) | applist 52 → 53; `Home` entry with `icon /icon/vidaa-home` present via MQTT applist |
 | tile behavior | owner-confirmed: Home shows the Home tile; opening it renders the launcher canvas (inputs row, app icons, shortcuts) |
 

@@ -7,7 +7,7 @@ function packages(){
  const code=String.raw`import ast,base64,importlib.util,io,json,pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1]); tree=ast.parse((root.parent/'u7q/scripts/make_installer.py').read_text())
 template=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='POSTINST' for t in n.targets))
-template=template.replace('@PHONE@','192.168.50.37:9000').replace('@PHONEHOST@','192.168.50.37').replace('@PHONEPORT@','9000')
+template=template.replace('@PHONE@','<server-ip>:9000').replace('@PHONEHOST@','<server-ip>').replace('@PHONEPORT@','9000')
 a=template.index('echo "--- step: phone home ---"');b=template.index('\n} > "$D/installer_log.txt"',a)
 block=template[a:b]
 source='#!/bin/sh\n{\necho root-ssh-unchanged\n  echo "--- native Home: no extra launcher server ---"\n  '+block+'\n} > "$D/installer_log.txt"\nexit 0\n'
