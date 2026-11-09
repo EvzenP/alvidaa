@@ -31,10 +31,31 @@ and switch-service probes, per-model recon variants, network checks. They are
 kept because they document how a result was obtained, and they are **not**
 linked from the launcher. If you are adding a diagnostic, put it here.
 
-## Known impossible, so nobody re-tries it
+## Dead ends, and how dead
 
-- **Live input preview.** Hisense's own source menu shows a thumbnail of what is on each HDMI port. That is drawn by the native video pipeline, below anything a web page can reach. The vendor launcher bundle carries no `preview`, `thumbnail` or `snapshot` API. A static per-input logo is the closest we get; a live frame is not available.
-- **Audio capture.** The TV's audio never enters a userspace ALSA stream — every PCM reports `closed` during playback, optical or internal speakers. See `docs/models/50A51HUV/09.01O.P0813/findings/11-firmware-notes.md` §7. This is why librespot (#19) is dead on this model.
+Two things people will try. Both stopped somewhere specific, and the stopping
+point is recorded so the next attempt starts further along than zero. Neither is
+proven impossible.
+
+**Live input preview — no path found from a page.** Hisense's own source menu
+shows a thumbnail of what is on each HDMI port, so the capability exists on the
+device. That rendering is in the native video pipeline, not the web layer, and
+the vendor launcher bundle carries no `preview`, `thumbnail` or `snapshot` API.
+What has *not* been audited: the `tvinfo` surface, the FaaS services, and `/proc`
+for a thumbnail or capture device. So this is "we looked in the obvious place and
+found nothing", not "there is no way". A static per-input logo is what ships.
+
+**Audio capture — dead through ALSA on this model, measured.** `/proc/asound`
+exposes one card (MStar-MAD) with five `mad_pcm` devices, each `playback 1 :
+capture 1`. `hw:0,0` opens, `set_params` and `start` succeed, then every
+`readi` returns EIO, and during playback all ten PCMs report `closed` — with
+audio going to an optical/S-PDIF speaker and to the internal speakers, same
+result. The conclusion is that `mad_pcm` is the decoder's internal interface,
+not the output mix. See `findings/11-firmware-notes.md` §7.
+
+One path is untested: odin declares `--alsa-output-device=…`, so audio played in
+a **web page** might open a PCM where a native app does not. That would need a
+deliberate exception to the browser DNS block to test.
 
 ## The three launcher lanes
 
