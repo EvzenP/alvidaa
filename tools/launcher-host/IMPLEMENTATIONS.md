@@ -21,6 +21,20 @@ that lists apps and inputs through the vendor SDK and opens the real stock
 Settings. The 75U8QTUK entry is a per-build port of the generic one, which is
 the pattern to copy rather than a second product.
 
+### Who got there first
+
+Worth knowing, because the two contributions are easy to conflate:
+
+- **First code:** JacksonDCollins, PR #24 (2026-11-07 01:24). That is where
+  `native-entry.js` and `native-home.cjs` came from, on the 55A7KAU.
+- **The write-up the approach is learned from:** Kingpandacc, PR #28
+  (2026-11-07 16:20). `docs/models/75U8QTUK/…/findings/09-native-home.md` is
+  still the canonical description of the preflight, the route swap, the SDK
+  contract table and the rollback.
+
+If you are implementing lane 3, read the 75U8QTUK findings and reuse Jackson's
+scaffold. They are complementary, not competing.
+
 ## The shared pieces
 
 Every implementation in this directory uses these:
