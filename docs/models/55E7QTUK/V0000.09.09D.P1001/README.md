@@ -64,7 +64,40 @@ binaries must be assembled per the published recipe); the service function
 root documents; the launcher's second-lane (Pi) port; any claim that the
 root persists beyond the teardown state described here.
 
-## Where to go next
+## Teardown
+
+Three layers, each with verified commands:
+
+- **Launcher.** The server-side `selfinstall.html` is the reversible landing
+  point; it removes the tile and the `websdk/Appinfo.json` entry it created
+  ([01](findings/01-launcher-install.md)).
+- **Root.** Kill dropbear, uninstall the package (superwatch id `54`, or the
+  direct `opkg` path), remove the key and the freeze rules
+  ([05](findings/05-root-ssh.md)).
+- **Boot persistence.** Copy the pristine serviceList back
+  (`/APPS/.re_sshd/serviceList.json.pristine`), then run the root teardown
+  ([06](findings/06-boot-persistence.md)).
+
+Residual state if the persistence layer is removed without the root teardown:
+the dropbear key stays in `authorized_keys` and the OTA freeze stays in the
+postinst. Removing the persistence entry stops the re-arm; it does not undo
+root.
+
+## Open items
+
+- **Every-boot DNS coverage is not currently reliable.** The `re_sshd` service
+  loads but `start()` never runs on this branch, the `otaTest` hook is
+  exec-blocked pre-root, and superwatch `53`/`54` answer `0` without
+  installing. The current failure states and the recovery playbook are in
+  [09](findings/09-device-dns-resolver.md).
+- **`identity_gate` and `devtools_forge` are untested** on this unit.
+- **The euladpp untar lane is absent** on this branch (no boot consumer), so
+  it is recorded `n-a` rather than untested
+  ([07](findings/07-os-map-alternate-avenues.md)).
+- **The launcher's second lane (Pi/NAS bridge) has not been ported** to this
+  unit; only the on-TV canvas lane is verified here.
+
+## Findings
 
 [findings/00](findings/00-fingerprint.md) — pairing; [01](findings/01-launcher-install.md)
 — launcher self-install; [02](findings/02-recon-ladder.md) — bridge/traversal;
