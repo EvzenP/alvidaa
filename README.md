@@ -172,7 +172,7 @@ both regenerate from `docs/research/inventory.json`.
 | 75UR9S | V0000.09.60W.Q0624 | untested | achieved | [@EvzenP](https://github.com/EvzenP) |
 | 43E7DS | 09.60W.Q0612 (EU_A) | working | achieved | [@ryjr2ddznn-lab](https://github.com/ryjr2ddznn-lab) |
 | 50A6Q | V0000.09.61B.Q0721 | untested | achieved | [@aadnaane](https://github.com/aadnaane) |
-| 55A7KAU | V0000.09.09O.P1015 | working | achieved + boot-persistent | @owner (this session) |
+| 55A7KAU | V0000.09.09O.P1015 | working | achieved + boot-persistent | [@JacksonDCollins](https://github.com/JacksonDCollins) |
 | 75U8QTUK | V0000.09.60I.Q0813 (UK) | working | ACHIEVED 2026-11-06 | [@kingpandacc](https://github.com/kingpandacc) |
 | 43A5LE | V0000.09.60A.Q0707 | working | untested | [@antmagl](https://github.com/antmagl) |
 | 43A5FE | V0010.09.09A.P0930 | working | achieved | [@gitgost-sa2](https://github.com/gitgost-sa2) |

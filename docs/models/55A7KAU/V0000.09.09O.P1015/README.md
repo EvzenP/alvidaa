@@ -7,7 +7,7 @@
 - **Region:** AU (AUS)
 - **VIDAA OS:** U09.09
 - **Browser:** Chromium 111 "odin"
-- **Reported by:** owner (this session)
+- **Contributed by:** [@JacksonDCollins](https://github.com/JacksonDCollins) (own unit)
 
 ## Root chain (verified 2026-11-06)
 
