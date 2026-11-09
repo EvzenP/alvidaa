@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Render the firmware inventory (docs/research/inventory.json) into the human tables.
 
-Updates two files, between INVENTORY markers:
+Updates, between generated markers:
   - README.md:                              the tested-models matrix
   - docs/research/10-patched-firmware-playbook.md:       the generation status table
+  - docs/research/TESTED-MODELS.md:         the full matrix + the per-unit status detail
 
-Single source of truth is the JSON — never hand-edit the rendered tables.
+Capability values in the JSON are a single vocabulary token each; the prose that
+explains *why* lives in the optional per-row "capability_detail" object and is
+rendered into TESTED-MODELS.md. Single source of truth is the JSON — never
+hand-edit the rendered tables.
 Usage: scripts/gen-inventory.py [--check]  (--check fails if output would change)
 """
 import json, sys, os
@@ -18,6 +22,7 @@ PLAYBOOK = os.path.join(ROOT, "docs", "research", "10-patched-firmware-playbook.
 TESTED = os.path.join(ROOT, "docs", "research", "TESTED-MODELS.md")
 
 MARK = ("<!-- INVENTORY:START -->", "<!-- INVENTORY:END -->")
+MARK_DETAIL = ("<!-- INVENTORY_DETAIL:START -->", "<!-- INVENTORY_DETAIL:END -->")
 
 def esc(s):
     return str(s).replace("|", "\\|")
@@ -94,6 +99,29 @@ def tested_models_table(fw):
     return "\n".join([cols, sep] + rows)
 
 
+def tested_models_detail(fw, legend):
+    """Per-unit prose behind the matrix tokens, for TESTED-MODELS.md.
+
+    Only capabilities that carry detail are listed, in legend order, so the
+    matrix stays machine-readable (one vocabulary token per capability) and the
+    measurement that produced the token stays next to it.
+    """
+    order = [k for k in legend if k != "notes"]
+    blocks = []
+    for f in fw:
+        detail = f.get("capability_detail") or {}
+        if not detail:
+            continue
+        caps = f["capabilities"]
+        keys = [k for k in order if k in detail] + sorted(k for k in detail if k not in order)
+        lines = [f"**{esc(f['model'])} — {esc(f['id'])}**"]
+        for k in keys:
+            status = caps.get(k, "untested")
+            lines.append(f"- `{k}` **{status}** — {esc(detail[k])}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def short_model(model):
     """Drop the parenthetical aliases: the README needs the name, not the essay."""
     return model.split(" (")[0].strip()
@@ -140,6 +168,7 @@ def main():
     pb_new = replace_between(pb, *MARK, playbook_table(fw))
     tm = open(TESTED).read()
     tm_new = replace_between(tm, *MARK, tested_models_table(fw))
+    tm_new = replace_between(tm_new, *MARK_DETAIL, tested_models_detail(fw, inv.get("capabilities", {})))
 
     changed = []
     if rd_new != rd:

@@ -162,21 +162,21 @@ both regenerate from `docs/research/inventory.json`.
 | --- | --- | --- | --- | --- |
 | 50A51HUV | 09.01O.P0813 | working | achieved | [@carteakey](https://github.com/carteakey) |
 | 55S7NEVS | 09.60X.Q0609 (2026-06) | untested | achieved | [u/possibly_matt](https://reddit.com/user/possibly_matt) |
-| 55A60LEVS | 09.60V.Q0612 (2026-07 EU_A) | untested | blocked-at-fileWrite | [u/Affectionate-End-601](https://reddit.com/user/Affectionate-End-601) |
+| 55A60LEVS | 09.60V.Q0612 (2026-07 EU_A) | untested | blocked | [u/Affectionate-End-601](https://reddit.com/user/Affectionate-End-601) |
 | 43A60LEVS | 09.60V.Q0612 (2026-07) | untested | untested | [u/Wing-Tsit-Chong](https://reddit.com/user/Wing-Tsit-Chong) |
 | ? | 09.60V.Q0612 (build date unconfirmed) | untested | untested | [u/____dls](https://reddit.com/user/____dls) |
-| 65U8HAU | V0000.06.29X.P0813 (AU) | working | blocked-at-origin-gate | [@MewX](https://github.com/MewX) |
-| 65U7H | V0000.06.29X.P0813 (IN) | untested | not achieved | [u/pavanjadhaw](https://reddit.com/user/pavanjadhaw) |
-| HE40E5600FFWTS | V0100.01.00A.N0410 | custom-UI templates shipped | achieved | [@oOHiyoriOo](https://github.com/oOHiyoriOo) |
+| 65U8HAU | V0000.06.29X.P0813 (AU) | working | blocked | [@MewX](https://github.com/MewX) |
+| 65U7H | V0000.06.29X.P0813 (IN) | untested | blocked | [u/pavanjadhaw](https://reddit.com/user/pavanjadhaw) |
+| HE40E5600FFWTS | V0100.01.00A.N0410 | untested | achieved | [@oOHiyoriOo](https://github.com/oOHiyoriOo) |
 | 100U7Q | V0000.09.60I.Q0813 | untested | achieved | [@oOHiyoriOo](https://github.com/oOHiyoriOo) |
 | 75UR9S | V0000.09.60W.Q0624 | untested | achieved | [@EvzenP](https://github.com/EvzenP) |
 | 43E7DS | 09.60W.Q0612 (EU_A) | working | achieved | [@ryjr2ddznn-lab](https://github.com/ryjr2ddznn-lab) |
 | 50A6Q | V0000.09.61B.Q0721 | untested | achieved | [@aadnaane](https://github.com/aadnaane) |
-| 55A7KAU | V0000.09.09O.P1015 | working | achieved + boot-persistent | [@JacksonDCollins](https://github.com/JacksonDCollins) |
-| 75U8QTUK | V0000.09.60I.Q0813 (UK) | working | ACHIEVED 2026-11-06 | [@kingpandacc](https://github.com/kingpandacc) |
+| 55A7KAU | V0000.09.09O.P1015 | working | achieved | [@JacksonDCollins](https://github.com/JacksonDCollins) |
+| 75U8QTUK | V0000.09.60I.Q0813 (UK) | working | achieved | [@kingpandacc](https://github.com/kingpandacc) |
 | 43A5LE | V0000.09.60A.Q0707 | working | untested | [@antmagl](https://github.com/antmagl) |
 | 43A5FE | V0010.09.09A.P0930 | working | achieved | [@gitgost-sa2](https://github.com/gitgost-sa2) |
-| 55E7QTUK | V0000.09.09D.P1001 (UK) | working | achieved + boot-persistent | [@damiennnnn](https://github.com/damiennnnn) |
+| 55E7QTUK | V0000.09.09D.P1001 (UK) | working | achieved | [@damiennnnn](https://github.com/damiennnnn) |
 | 32A35HUV | V0000.09.01O.P0814 | working | achieved | [@EmoFa](https://github.com/EmoFa) |
 | 50A7HAU | V0000.06.12X.N1212 | untested | untested | [@gonzule](https://github.com/gonzule) |
 <!-- INVENTORY:END -->

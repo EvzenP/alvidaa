@@ -27,7 +27,11 @@ is what tells the next owner where to dig.
    (not per unit — dedupe same-generation reports by extending
    `tested_by`). Status vocabulary per capability, exactly:
    `working | gated | closed | open | armed | achieved | blocked | untested | n-a`.
-   Keep `notes` to facts with evidence pointers.
+   **One token per capability — never prose.** The measurement behind a token
+   goes in the row's optional `capability_detail` object, keyed by the same
+   capability names; `scripts/gen-inventory.py` renders it into
+   `docs/research/TESTED-MODELS.md`, and `scripts/check.sh` fails on a value
+   outside the vocabulary. Keep `notes` to facts with evidence pointers.
    Format `tested_by` entries using platform prefixes or objects to generate
    direct links without ghost-mentions:
    - GitHub: `"gh:username"` (renders `[@username](https://github.com/username)`)
@@ -50,8 +54,11 @@ is what tells the next owner where to dig.
        "file_bridge_traversal": "closed",
        "file_bridge_write": "gated",
        "identity_gate": "working",
-       "root": "blocked-at-fileWrite",
+       "root": "blocked",
        "notes": "identity gate {appid,md5,permissions}; see findings/10"
+     },
+     "capability_detail": {
+       "root": "Blocked at the fileWrite gate: no write primitive on this build."
      }
    }
    ```
@@ -59,12 +66,13 @@ is what tells the next owner where to dig.
 2. **Regenerate the tables.**
 
    ```sh
-   python3 scripts/gen-inventory.py            # rewrites README + playbook tables
+   python3 scripts/gen-inventory.py            # rewrites README, playbook, tested-models
    python3 scripts/gen-inventory.py --check    # CI-style: fails if stale
    ```
 
-   Never hand-edit the markdown between `<!-- INVENTORY:START -->` and
-   `<!-- INVENTORY:END -->` markers.
+   Never hand-edit the markdown between `<!-- INVENTORY:START -->` /
+   `<!-- INVENTORY:END -->`, or between `<!-- INVENTORY_DETAIL:START -->` /
+   `<!-- INVENTORY_DETAIL:END -->` markers.
 
 3. **Narrate material changes** in
    `docs/research/10-patched-firmware-playbook.md` (a new root, a closed
