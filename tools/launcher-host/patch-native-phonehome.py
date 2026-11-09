@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import importlib.util
+import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -10,6 +11,16 @@ SPEC = importlib.util.spec_from_file_location("feed_patch", HERE / "patch-native
 assert SPEC is not None and SPEC.loader is not None
 BASE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BASE)
+
+# The phonehome host is operator config, not vendor code, so it is normalised
+# out before hashing. The pin then matches the same installer template on any
+# network, which is what a maintenance tool needs.
+BLOCK_HASH = "3cf1c1696643190c628521ee20b12136367309a4186823fb7e55e4c1ef58549a"
+IPV4 = re.compile(rb"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def normalize(block):
+    return IPV4.sub(b"<server-ip>", block)
 
 
 def transform(content):
@@ -19,7 +30,7 @@ def transform(content):
         raise ValueError("Unknown phonehome bootstrap")
     start = content.index(marker)
     finish = content.index(end, start)
-    if hashlib.sha256(content[start:finish]).hexdigest() != "72259468b9c057bb3f11b36f7ef3c6ac35725e857aea1ab09999f9bbbc4f52be":
+    if hashlib.sha256(normalize(content[start:finish])).hexdigest() != BLOCK_HASH:
         raise ValueError("Unknown phonehome fragment")
     return content[:start] + marker + b'\n  # ALVIDAA_PHONEHOME_RETIRED_V1: root SSH is the recovery lane.' + content[finish:]
 

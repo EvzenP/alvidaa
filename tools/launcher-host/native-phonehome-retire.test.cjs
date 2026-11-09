@@ -61,3 +61,15 @@ test('unknown scripts, stale state and concurrent edits fail without overwriting
  assert.throws(()=>retirement.restore(f.home),/Concurrent bootstrap/);assert.equal(fs.readFileSync(f.home.p(PACKAGE),'utf8'),'concurrent installer');
  assert.throws(()=>retirement.transform('unknown startup'),/Unknown/);
 });
+test('the phonehome guard matches any peer on port 9000, not one address',()=>{
+ const head='  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode';
+ const ssh='   0: 00000000:1F48 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1';
+ const phone=(peer)=>'   1: 0100007F:9C40 '+peer+' 01 00000000:00000000 00:00000000 00000000     0        0 2';
+ assert.equal(retirement.PHONEHOME_PORT,'2328');
+ assert.equal(retirement.legacyConnections(head+'\n'+ssh).length,0);
+ // Any server on 9000 is the legacy dial-out, whichever network it lives on.
+ assert.equal(retirement.legacyConnections(head+'\n'+ssh+'\n'+phone('0A0001C0:2328')).length,1);
+ assert.equal(retirement.legacyConnections(head+'\n'+phone('0100007F:2328')).length,1);
+ // A different port is not the phonehome.
+ assert.equal(retirement.legacyConnections(head+'\n'+phone('0A0001C0:1F90')).length,0);
+});

@@ -7,14 +7,19 @@ const {APP,hash,atomicWrite}=require('./native-trial.cjs');
 const {archive,controlFiles,postinst,PACKAGE}=require('./retire-native-bridge.cjs');
 const boot=require('./native-web-boot.cjs');
 const SCRIPT='/APPS/.re_sshd/phonehome.sh';
-const BLOCK_HASH='72259468b9c057bb3f11b36f7ef3c6ac35725e857aea1ab09999f9bbbc4f52be';
-const SCRIPT_HASH='63474ddd13c49dde5e2ddcefd613d6a9b7b26d1955a22e78a87ceb49330bd837';
+// The phonehome host is operator config, not vendor code, so it is normalised
+// out before hashing. The pin then matches the same installer template on any
+// network, which is what a maintenance tool needs.
+const BLOCK_HASH='3cf1c1696643190c628521ee20b12136367309a4186823fb7e55e4c1ef58549a';
+const SCRIPT_HASH='3ba514de7fd330f204161752c6c040924a74b3916d5f7017d4186a102453a92b';
 const CONTROL=['retire-native-phonehome.cjs','native-home.cjs','native-trial.cjs','native-update.cjs','stock-ui-restart.cjs','retire-native-bridge.cjs','native-web-boot.cjs','native-feed-boot.sh'];
+function normalizeBlock(block){return block.replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g,'<server-ip>');}
+function scriptHash(data){return hash(Buffer.from(normalizeBlock(Buffer.isBuffer(data)?data.toString('utf8'):String(data))));}
 function transform(source){
  const marker='echo "--- step: phone home ---"',end='\n} > "$D/installer_log.txt"';
  const a=source.indexOf(marker),b=source.indexOf(end,a);
  assert.ok(a>=0&&b>a&&source.lastIndexOf(marker)===a,'Unknown phonehome bootstrap');
- assert.equal(hash(Buffer.from(source.slice(a,b))),BLOCK_HASH,'Unknown phonehome fragment');
+ assert.equal(hash(Buffer.from(normalizeBlock(source.slice(a,b)))),BLOCK_HASH,'Unknown phonehome fragment');
  return source.slice(0,a)+marker+'\n  # ALVIDAA_PHONEHOME_RETIRED_V1: root SSH is the recovery lane.'+source.slice(b);
 }
 function validate(before,after){
@@ -24,10 +29,19 @@ function validate(before,after){
  for(const key of Object.keys(x)){assert.equal(x[key].metadata,y[key].metadata,'Control permissions changed');if(key!=='postinst')assert.ok(x[key].body.equals(y[key].body),'Control data changed');}
  assert.equal(postinst(b['control.tar.gz']),transform(postinst(a['control.tar.gz'])),'Unexpected bootstrap change');
 }
+// The legacy phonehome dials out to the server's port 9000. Match the port,
+// not one peer address: a generic maintenance tool must not encode a personal
+// LAN address as its safety check.
+const PHONEHOME_PORT='2328'; // 9000, in /proc/net/tcp hex
+function legacyConnections(table){
+ return table.split('\n').map(line=>line.trim().split(/\s+/))
+  .filter(row=>row[2]&&row[2].endsWith(':'+PHONEHOME_PORT));
+}
 function ready(){
- const tcp=fs.readFileSync('/proc/net/tcp','utf8').split('\n').map(x=>x.trim().split(/\s+/));
- assert.ok(tcp.some(x=>x[3]==='0A'&&x[1].endsWith(':1F48')),'Root SSH must remain listening');
- assert.ok(!tcp.some(x=>x[2]==='2532A8C0:2328'),'Legacy reverse connection is still present');
+ const tcp=fs.readFileSync('/proc/net/tcp','utf8');
+ const rows=tcp.split('\n').map(x=>x.trim().split(/\s+/));
+ assert.ok(rows.some(x=>x[3]==='0A'&&x[1].endsWith(':1F48')),'Root SSH must remain listening');
+ assert.equal(legacyConnections(tcp).length,0,'Legacy phonehome connection is still present');
  for(const id of fs.readdirSync('/proc').filter(x=>/^\d+$/.test(x))){
   let args;try{args=fs.readFileSync('/proc/'+id+'/cmdline').toString().split('\0');}catch(error){if(error.code==='ENOENT'||error.code==='ESRCH')continue;throw error;}
   assert.ok(!args.some(x=>x===SCRIPT||x.endsWith('/phonehome.sh')),'Stop the owned phonehome process before retirement');
@@ -50,7 +64,7 @@ function apply(home,candidate,base,expectedHome,expectedBootstrap,ops={}){
  assert.equal(old.phase,'installed','Bootstrap recovery is not stable');assert.equal(hash(oldOriginal),old.original,'Bootstrap backup changed');assert.equal(hash(before),old.updated,'Bootstrap ownership changed');
  assert.deepEqual(fs.readdirSync(live).sort(),['installer.orig','state.json'],'Unexpected bootstrap journal files');
  validate(before,updated);validate(oldOriginal,original);boot.validate(original,updated);
- let script=null;if(fs.existsSync(home.p(SCRIPT))){const data=bytes(home.p(SCRIPT)),s=fs.statSync(home.p(SCRIPT));assert.equal(hash(data),SCRIPT_HASH,'Legacy script changed');script={sha256:hash(data),uid:s.uid,gid:s.gid,mode:s.mode};}
+ let script=null;if(fs.existsSync(home.p(SCRIPT))){const data=bytes(home.p(SCRIPT)),s=fs.statSync(home.p(SCRIPT));assert.equal(scriptHash(data),SCRIPT_HASH,'Legacy script changed');script={sha256:scriptHash(data),uid:s.uid,gid:s.gid,mode:s.mode};}
  const free=fs.statfsSync(home.state);assert.ok(free.bavail*free.bsize>=64*1024*1024+4*(before.length+original.length)+4*1024*1024,'64 MiB reserve would be endangered');
  const dir=path.join(home.state,'retired-phonehome');fs.mkdirSync(dir,{mode:0o700});
  const m={phase:'prepared',expectedHome,before:hash(before),after:hash(updated),oldOriginal:old.original,oldState:hash(oldState),safeOriginal:hash(original),uid:meta.uid,gid:meta.gid,mode:meta.mode,script};
@@ -65,7 +79,7 @@ function apply(home,candidate,base,expectedHome,expectedBootstrap,ops={}){
   assert.equal(hash(bytes(path.join(live,'state.json'))),m.oldState,'Concurrent recovery edit');assert.equal(hash(bytes(path.join(live,'installer.orig'))),m.oldOriginal,'Bootstrap backup changed');
   fs.renameSync(live,path.join(dir,'old-boot'));if(ops.afterMove)ops.afterMove();
   fs.renameSync(next,live);atomicWrite(packageFile,updated,m);
-  check();if(script){assert.equal(hash(bytes(home.p(SCRIPT))),script.sha256,'Concurrent legacy script edit');fs.unlinkSync(home.p(SCRIPT));}
+  check();if(script){assert.equal(scriptHash(bytes(home.p(SCRIPT))),script.sha256,'Concurrent legacy script edit');fs.unlinkSync(home.p(SCRIPT));}
   m.phase='retired';save(dir,m);return m.phase;
  }catch(error){m.phase='needs-recovery';save(dir,m);throw new Error(error.message+'; retain retired-phonehome journal and use its independent restore controller');}
 }
@@ -79,11 +93,11 @@ function restore(home){
  const oldDir=fs.existsSync(old)?old:live;
  assert.equal(hash(bytes(path.join(oldDir,'installer.orig'))),m.oldOriginal,'Historical bootstrap backup changed');assert.equal(hash(bytes(path.join(oldDir,'state.json'))),m.oldState,'Historical recovery journal changed');
  if(fs.existsSync(old)&&fs.existsSync(live)){assert.equal(hash(bytes(path.join(live,'installer.orig'))),m.safeOriginal,'Concurrent safe backup edit');assert.equal(hash(bytes(path.join(live,'state.json'))),m.safeState,'Concurrent safe journal edit');}
- if(m.script){assert.equal(hash(bytes(path.join(dir,'phonehome.disabled'))),m.script.sha256,'Script backup changed');if(fs.existsSync(home.p(SCRIPT)))assert.equal(hash(bytes(home.p(SCRIPT))),m.script.sha256,'Concurrent script edit');}
+ if(m.script){assert.equal(scriptHash(bytes(path.join(dir,'phonehome.disabled'))),m.script.sha256,'Script backup changed');if(fs.existsSync(home.p(SCRIPT)))assert.equal(scriptHash(bytes(home.p(SCRIPT))),m.script.sha256,'Concurrent script edit');}
  if(fs.existsSync(old)){if(fs.existsSync(live))fs.renameSync(live,path.join(dir,'safe-boot-restored'));fs.renameSync(old,live);}
  atomicWrite(home.p(PACKAGE),before,m);
  if(m.script&&!fs.existsSync(home.p(SCRIPT)))atomicWrite(home.p(SCRIPT),bytes(path.join(dir,'phonehome.disabled')),m.script);
  m.phase='restored';save(dir,m);return 'restored; legacy startup restored but no process started';
 }
 if(require.main===module){try{assert.equal(process.getuid(),0,'Root SSH required');const [command,candidate,base,expectedHome,expectedBootstrap]=process.argv.slice(2),home=new NativeHome(),release=acquire(home.state);try{if(command==='apply')console.log(apply(home,candidate,base,expectedHome,expectedBootstrap));else if(command==='restore')console.log(restore(home));else throw Error('Use apply updated.ipk base.ipk home-sha bootstrap-sha | restore');}finally{release();}process.exit(0);}catch(error){console.error(error.message);process.exit(1);}}
-module.exports={transform,validate,apply,restore,ready,SCRIPT,CONTROL};
+module.exports={transform,validate,apply,restore,ready,legacyConnections,normalizeBlock,PHONEHOME_PORT,SCRIPT,CONTROL};
