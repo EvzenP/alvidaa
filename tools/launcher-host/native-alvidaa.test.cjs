@@ -89,7 +89,8 @@ test('starts once, filters apps and inputs, and cleans up', () => {
   assert.equal(v.apps.length, 2);
   assert.deepEqual(v.apps.map(a => a.appId), ['1', '2']);
   assert.equal(v.sources.length, 3);
-  assert.match(v.status, /Native · 2 apps · 3 inputs/);
+  assert.equal(v.toast, '');
+  assert.equal(v.toastUntil, 0);
   assert.equal(f.root.AlvidaaNativeActive, v);
   assert.equal(f.bodyListeners.size, 1);
   f.component.deactivated.call(v);
@@ -176,26 +177,81 @@ test('app overlay pages, launches and clamps at both ends', () => {
   v.app = 0;
   v.handleKey(k.ENTER);
   assert.equal(v.overlay, false);
-  assert.match(v.status, /No apps reported/);
+  assert.match(v.toast, /No apps reported/);
   v.stop();
 });
 
-test('failed actions surface in the status line instead of throwing', () => {
+test('failed actions surface in the toast HUD instead of throwing', () => {
   const f = setup(), v = f.instance;
   v.start();
   v._platform.changeSource = () => { throw new Error('input busy'); };
   v.zone = 'dock';
   v.dock = 0;
   v.activate();
-  assert.match(v.status, /Action failed: input busy/);
+  assert.match(v.toast, /Action failed: input busy/);
+  assert.ok(v.toastUntil > Date.now());
   v._platform.openSettings = () => Promise.reject(new Error('denied'));
   v.zone = 'apps';
   v.app = 1;
   v.activate();
   return Promise.resolve().then(() => {
-    assert.match(v.status, /Action failed: denied/);
+    assert.match(v.toast, /Action failed: denied/);
     v.stop();
   });
+});
+
+test('toast HUD manages timing, expiry, and floating glass pill presentation', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+
+  // Initially empty and hidden
+  assert.equal(v.toast, '');
+  assert.equal(v.toastUntil, 0);
+  let tree = flatten(draw());
+  let hud = tree.find(n => n.data && n.data.attrs && n.data.attrs.role === 'status');
+  assert.ok(hud, 'floating toast HUD pill exists in root layers');
+  assert.equal(hud.data.style.opacity, 0);
+  assert.equal(hud.data.style.visibility, 'hidden');
+  assert.ok(hud.data.style.transition.includes('opacity'));
+  assert.ok(hud.data.style.transition.includes('transform'));
+
+  // Setting a toast makes it visible and shows message
+  v.showToast('Test notice', 1500);
+  assert.equal(v.toast, 'Test notice');
+  assert.ok(v.toastUntil > Date.now());
+  tree = flatten(draw());
+  hud = tree.find(n => n.data && n.data.attrs && n.data.attrs.role === 'status');
+  assert.equal(hud.data.style.opacity, 1);
+  assert.equal(hud.data.style.visibility, 'visible');
+  assert.ok(hud.children.includes('Test notice'));
+
+  // Clock tick before deadline does not expire toast
+  const clockTick = Array.from(f.timers.values())[0];
+  assert.ok(typeof clockTick === 'function', '1s clock interval exists');
+  v.toastUntil = Date.now() + 5000;
+  clockTick();
+  assert.equal(v.toast, 'Test notice');
+
+  // Clock tick at or past deadline expires toast
+  v.toastUntil = Date.now() - 10;
+  clockTick();
+  assert.equal(v.toast, '');
+  assert.equal(v.toastUntil, 0);
+
+  // Hidden again after expiry
+  tree = flatten(draw());
+  hud = tree.find(n => n.data && n.data.attrs && n.data.attrs.role === 'status');
+  assert.equal(hud.data.style.opacity, 0);
+  assert.equal(hud.data.style.visibility, 'hidden');
+
+  // openOverlay with no apps triggers a toast
+  v.apps = [];
+  v.openOverlay();
+  assert.equal(v.toast, 'No apps reported');
+  assert.equal(v.overlay, false);
+
+  v.stop();
 });
 
 test('render keeps the dock design, scales it and never loads the open web', () => {

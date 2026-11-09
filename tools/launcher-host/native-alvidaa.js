@@ -94,7 +94,7 @@
           zone: "dock", dock: 0, app: 0,
           overlay: false, overlayIndex: 0,
           now: new Date(), width: (root && root.innerWidth) || 1920,
-          status: "Starting native services…"
+          toast: "", toastUntil: 0
         };
       },
       mounted: function () { this.start(); },
@@ -115,13 +115,19 @@
             vm.sources = data.sources.filter(function (input) {
               return input && input.sourceId != null;
             });
-            vm.status = data.errors.length ? data.errors.join("; ") :
-              data.waiting ? "Waiting for TV data…" :
-              "Native · " + vm.apps.length + " apps · " + vm.sources.length + " inputs";
+            if (data.errors && data.errors.length) {
+              vm.showToast(data.errors.join("; "));
+            }
             vm.clamp();
           });
           this._platform.start();
-          this._clock = setInterval(function () { vm.now = new Date(); }, 1000);
+          this._clock = setInterval(function () {
+            vm.now = new Date();
+            if (vm.toast && Date.now() >= vm.toastUntil) {
+              vm.toast = "";
+              vm.toastUntil = 0;
+            }
+          }, 1000);
           this._resize = function () { vm.width = (root && root.innerWidth) || 1920; };
           if (root.addEventListener) root.addEventListener("resize", this._resize);
           this.routeFocus();
@@ -204,17 +210,22 @@
           this.app = Math.max(0, Math.min(this.app, this.appItems().length - 1));
           this.overlayIndex = Math.max(0, Math.min(this.overlayIndex, this.apps.length - 1));
         },
+        showToast: function (text, ms) {
+          if (!text) return;
+          this.toast = String(text);
+          this.toastUntil = Date.now() + (typeof ms === "number" ? ms : 2500);
+        },
         run: function (action) {
           var vm = this;
           try {
             var result = action();
             if (result && typeof result.then === "function") {
-              result.catch(function (error) { vm.status = "Action failed: " + error.message; });
+              result.catch(function (error) { vm.showToast("Action failed: " + error.message); });
             }
-          } catch (error) { this.status = "Action failed: " + error.message; }
+          } catch (error) { this.showToast("Action failed: " + error.message); }
         },
         openOverlay: function () {
-          if (!this.apps.length) { this.status = "No apps reported"; return; }
+          if (!this.apps.length) { this.showToast("No apps reported"); return; }
           this.overlay = true;
           this.overlayIndex = 0;
         },
@@ -224,17 +235,22 @@
           if (this.zone === "dock") {
             var input = this.dockItems()[this.dock];
             if (!input) return;
+            this.showToast("Switching to " + this.sourceName(input) + "…");
             this.run(function () { return vm._platform.changeSource(input.sourceId); });
             return;
           }
           var item = this.appItems()[this.app];
           if (!item) return;
           if (item.kind === "apps") this.openOverlay();
-          else this.run(function () { return vm._platform.openSettings(); });
+          else {
+            this.showToast("Opening " + item.label + "…");
+            this.run(function () { return vm._platform.openSettings(); });
+          }
         },
         launchFocused: function () {
           var vm = this, app = this.apps[this.overlayIndex];
           if (!app) return;
+          this.showToast("Opening " + (app.appName || "app") + "…");
           this.run(function () { return vm._platform.launchApp(app.appId); });
           this.closeOverlay();
         },
@@ -460,9 +476,32 @@
             backgroundColor: "rgba(6,8,12,0.55)"
           } }),
           stage,
-          h("div", { style: box(112, 1040, null, null, {
-            fontSize: 20, lineHeight: 24, color: "#475569"
-          }) }, [this.status])
+          (function () {
+            var toastVisible = Boolean(vm.toast && Date.now() < vm.toastUntil);
+            return h("div", {
+              attrs: { role: "status", "aria-live": "polite" },
+              style: {
+                position: "absolute",
+                left: "50%",
+                bottom: 28 * scale + "px",
+                transform: "translateX(-50%)" + (toastVisible ? " translateY(0)" : " translateY(8px)"),
+                opacity: toastVisible ? 1 : 0,
+                visibility: toastVisible ? "visible" : "hidden",
+                transition: "opacity 180ms ease-out, transform 180ms ease-out",
+                pointerEvents: "none",
+                padding: (8 * scale) + "px " + (22 * scale) + "px",
+                borderRadius: (20 * scale) + "px",
+                backgroundColor: "rgba(15, 23, 42, 0.88)",
+                border: "1px solid rgba(255, 255, 255, 0.16)",
+                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5)",
+                fontSize: (18 * scale) + "px",
+                lineHeight: (24 * scale) + "px",
+                fontWeight: "500",
+                color: "#f8fafc",
+                whiteSpace: "nowrap"
+              }
+            }, [vm.toast || ""]);
+          }())
         ];
 
         // ---- the app list overlay -----------------------------------------

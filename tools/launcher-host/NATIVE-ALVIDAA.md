@@ -19,6 +19,7 @@ The design is the canvas launcher's r4 layout, ported to DOM:
 | big label | the focused input's real name above the dock, `connected` / `no signal` under it |
 | Apps tile | one door; opens the app list as an overlay, 5-column grid |
 | Settings tile | opens the real stock TV Settings |
+| toast HUD | bottom center, floating glass pill for action feedback and alerts (default 2500ms, timed expiry) |
 
 Two views, panned vertically like the canvas: view 1 is the dock, view 2 is the
 apps row. ArrowDown pans, ArrowUp or Back pans back. Back at the dock is handed
@@ -46,6 +47,15 @@ The component consumes `native-platform.js`, which is where builds differ:
 - launch: `sdk.apc.start` through the platform adapter; APC keeps PIN, EULA and
   hotel-mode checks
 - settings: `setting.open("settings")`
+
+### Toast HUD
+
+Feedback and error messages are displayed via a floating glass HUD pill rendered in the root layer above the stage:
+
+- `toast` (message text) and `toastUntil` (epoch timestamp deadline) live in the component's reactive data.
+- `showToast(text, ms)` sets the active message and deadline, defaulting to 2500ms if unspecified.
+- Action failures from `run()`, empty overlay notices ("No apps reported"), and activation notices route through `showToast`.
+- The 1s clock interval drives toast expiry, clearing expired messages and triggering smooth opacity and transform transitions.
 
 ### Icons: local files, then the vendor host
 
@@ -125,5 +135,5 @@ node --test tools/launcher-host/native-alvidaa.test.cjs
 
 Covers start/stop idempotence, app and input filtering, name precedence,
 smart focus, dock and overlay navigation, Back ownership, action failures,
-render structure and scaling, the entry's variant selection, and the build's
-hash and output guards.
+toast HUD timing and expiry, render structure and scaling, the entry's variant
+selection, and the build's hash and output guards.
