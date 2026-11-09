@@ -21,6 +21,7 @@ The design is the canvas launcher's r4 layout, ported to DOM:
 | Settings tile | opens the real stock TV Settings |
 | toast HUD | bottom center, floating glass pill for action feedback and alerts (default 2500ms, timed expiry) |
 | number hotkeys | remote keys 1-9 focus & activate dock tiles 1-9; key 0 focuses dock 0 without activating |
+| auto-switch HUD | floating glass pill counting down boot switch when exactly one input has signal |
 
 Two views, panned vertically like the canvas: view 1 is the dock, view 2 is the
 apps row. ArrowDown pans, ArrowUp or Back pans back. Back at the dock is handed
@@ -67,6 +68,17 @@ Hardware remote number keys `0` through `9` are mapped from `sdk.key.KEYMAP` (`N
 - Out-of-range digits (or digits when no inputs exist) are not swallowed and pass through unhandled (`return false`).
 - Digits do not fire when the app list overlay is open.
 - Dock tiles render a subtle numeral keycap badge for inputs 1–9.
+
+### Boot auto-switch countdown
+
+When opt-in preference `alvidaa_auto_switch` is enabled in `sdk.storage` (default `false`), the launcher monitors inputs on the first platform payload:
+
+- If exactly one input reports active signal, a 3500ms countdown begins.
+- The countdown renders in the floating glass HUD pill: `Switching to <name> in Ns - press any key to stay`.
+- When the countdown reaches zero, `changeSource` automatically switches to that input.
+- Any handled remote navigation or number key cancels the countdown and displays a toast notice (`auto-switch cancelled`).
+- If no inputs or multiple inputs have signal, or if `alvidaa_auto_switch` is false, no countdown starts.
+- The countdown cancels immediately on `stop()`.
 
 ### Icons: local files, then the vendor host
 
@@ -166,5 +178,6 @@ Covers start/stop idempotence, app and input filtering, storage preferences
 (hidden/only apps, custom input names, last-used fallback, pinned favorites,
 absent storage), name precedence, smart focus, dock and overlay navigation,
 Back ownership, action failures, toast HUD timing and expiry, remote number
-hotkeys (0-9), render structure and scaling, the entry's variant selection,
-and the build's hash and output guards.
+hotkeys (0-9), boot auto-switch countdown (firing, cancel, live input guards),
+render structure and scaling, the entry's variant selection, and the build's
+hash and output guards.

@@ -136,6 +136,7 @@
           overlay: false, overlayIndex: 0,
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
+          autoSwitchId: null, autoSwitchName: "", autoSwitchAt: 0,
           prefs: {
             hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false, favorites: []
           }
@@ -184,6 +185,8 @@
           this._running = true;
           var vm = this;
           this._platform = root.AlvidaaNativePlatform(sdk, function (data) {
+            var firstPayload = !vm._payloadReceived;
+            vm._payloadReceived = true;
             vm._lastData = data;
             vm.apps = vm.filterApps(data.apps);
             vm.sources = data.sources.filter(function (input) {
@@ -193,11 +196,26 @@
               vm.showToast(data.errors.join("; "));
             }
             vm.clamp();
+            if (firstPayload && vm.prefs && vm.prefs.autoSwitch) {
+              var liveSources = vm.sources.filter(signalOf);
+              if (liveSources.length === 1) {
+                vm.startAutoSwitch(liveSources[0]);
+              }
+            } else if (!firstPayload && vm.autoSwitchAt) {
+              var live = vm.sources.filter(signalOf);
+              if (live.length !== 1 || live[0].sourceId !== vm.autoSwitchId) {
+                vm.cancelAutoSwitch();
+              }
+            }
           });
           this._platform.start();
           this._clock = setInterval(function () {
             vm.now = new Date();
-            if (vm.toast && Date.now() >= vm.toastUntil) {
+            var nowMs = Date.now();
+            if (vm.autoSwitchAt && nowMs >= vm.autoSwitchAt) {
+              vm.triggerAutoSwitch();
+            }
+            if (vm.toast && nowMs >= vm.toastUntil) {
               vm.toast = "";
               vm.toastUntil = 0;
             }
@@ -220,8 +238,16 @@
         },
         stop: function () {
           this._running = false;
+          this._payloadReceived = false;
           if (this._platform) this._platform.stop();
           clearInterval(this._clock);
+          if (this._autoSwitchTimer) {
+            clearTimeout(this._autoSwitchTimer);
+            this._autoSwitchTimer = null;
+          }
+          this.autoSwitchAt = 0;
+          this.autoSwitchId = null;
+          this.autoSwitchName = "";
           if (root.document && root.document.body) {
             root.document.body.removeEventListener("key-down", this._keyDown);
           }
@@ -343,6 +369,43 @@
           this.toast = String(text);
           this.toastUntil = Date.now() + (typeof ms === "number" ? ms : 2500);
         },
+        startAutoSwitch: function (input) {
+          if (!input || input.sourceId == null) return;
+          this.autoSwitchId = input.sourceId;
+          this.autoSwitchName = this.sourceName(input);
+          this.autoSwitchAt = Date.now() + 3500;
+          var vm = this;
+          if (typeof setTimeout === "function") {
+            this._autoSwitchTimer = setTimeout(function () {
+              vm.triggerAutoSwitch();
+            }, 3500);
+          }
+        },
+        triggerAutoSwitch: function () {
+          if (!this.autoSwitchAt || this.autoSwitchId == null) return;
+          var sid = this.autoSwitchId;
+          this.autoSwitchAt = 0;
+          this.autoSwitchId = null;
+          this.autoSwitchName = "";
+          if (this._autoSwitchTimer) {
+            clearTimeout(this._autoSwitchTimer);
+            this._autoSwitchTimer = null;
+          }
+          var vm = this;
+          this.run(function () { return vm._platform.changeSource(sid); });
+        },
+        cancelAutoSwitch: function () {
+          if (this.autoSwitchAt) {
+            this.autoSwitchAt = 0;
+            this.autoSwitchId = null;
+            this.autoSwitchName = "";
+            if (this._autoSwitchTimer) {
+              clearTimeout(this._autoSwitchTimer);
+              this._autoSwitchTimer = null;
+            }
+            this.showToast("auto-switch cancelled");
+          }
+        },
         run: function (action) {
           var vm = this;
           try {
@@ -413,6 +476,13 @@
             else if (code === keys.DOWN) this.overlayIndex += OVERLAY_COLS;
             else return false;
             this.clamp();
+            return true;
+          }
+          var isNum = Object.prototype.hasOwnProperty.call(numKeys, code);
+          var isNav = (code === keys.ENTER || code === keys.DOWN || code === keys.UP ||
+            code === keys.LEFT || code === keys.RIGHT || code === keys.BACK || code === keys.RETURN);
+          if (this.autoSwitchAt && (isNum || isNav)) {
+            this.cancelAutoSwitch();
             return true;
           }
           if (Object.prototype.hasOwnProperty.call(numKeys, code)) {
@@ -642,16 +712,26 @@
           } }),
           stage,
           (function () {
-            var toastVisible = Boolean(vm.toast && Date.now() < vm.toastUntil);
+            var nowMs = Date.now();
+            var isAutoSwitch = Boolean(vm.autoSwitchAt && vm.autoSwitchAt > nowMs && vm.autoSwitchId != null);
+            var isToast = Boolean(vm.toast && nowMs < vm.toastUntil);
+            var hudVisible = isAutoSwitch || isToast;
+            var text = "";
+            if (isAutoSwitch) {
+              var rem = Math.max(1, Math.ceil((vm.autoSwitchAt - nowMs) / 1000));
+              text = "Switching to " + vm.autoSwitchName + " in " + rem + "s - press any key to stay";
+            } else if (isToast) {
+              text = vm.toast;
+            }
             return h("div", {
               attrs: { role: "status", "aria-live": "polite" },
               style: {
                 position: "absolute",
                 left: "50%",
                 bottom: 28 * scale + "px",
-                transform: "translateX(-50%)" + (toastVisible ? " translateY(0)" : " translateY(8px)"),
-                opacity: toastVisible ? 1 : 0,
-                visibility: toastVisible ? "visible" : "hidden",
+                transform: "translateX(-50%)" + (hudVisible ? " translateY(0)" : " translateY(8px)"),
+                opacity: hudVisible ? 1 : 0,
+                visibility: hudVisible ? "visible" : "hidden",
                 transition: "opacity 180ms ease-out, transform 180ms ease-out",
                 pointerEvents: "none",
                 padding: (8 * scale) + "px " + (22 * scale) + "px",
@@ -665,7 +745,7 @@
                 color: "#f8fafc",
                 whiteSpace: "nowrap"
               }
-            }, [vm.toast || ""]);
+            }, [text]);
           }())
         ];
 

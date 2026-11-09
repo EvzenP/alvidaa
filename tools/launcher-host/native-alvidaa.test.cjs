@@ -65,8 +65,11 @@ function setup(options = {}) {
       openSettings() { calls.push(['settings']); }
     };
   };
+  const timeouts = new Map();
   vm.runInNewContext(SOURCE, {
     self: root,
+    setTimeout(fn, delay) { const id = ++next; timeouts.set(id, fn); return id; },
+    clearTimeout(id) { timeouts.delete(id); },
     setInterval(fn) { const id = ++next; timers.set(id, fn); return id; },
     clearInterval(id) { timers.delete(id); }
   });
@@ -74,7 +77,7 @@ function setup(options = {}) {
   const instance = component.data();
   instance.$route = { query: {} };
   for (const [key, fn] of Object.entries(component.methods)) instance[key] = fn.bind(instance);
-  return { root, sdk, component, instance, calls, timers, notify: () => notify, bodyListeners, store };
+  return { root, sdk, component, instance, calls, timers, timeouts, notify: () => notify, bodyListeners, store };
 }
 
 function flatten(tree) {
@@ -678,5 +681,140 @@ test('favorites: clamp tolerates changing favorites list', () => {
   v.readPrefs();
   assert.equal(v.appItems().length, 2);
   assert.equal(v.app, 1); // safely clamped from 3 to 1 (Settings)
+  v.stop();
+});
+
+test('auto-switch: no countdown when disabled (default)', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(v.prefs.autoSwitch, false);
+  assert.equal(v.autoSwitchAt, 0);
+  assert.equal(v.autoSwitchId, null);
+  v.stop();
+});
+
+test('auto-switch: no countdown with 0 or 2+ live inputs when enabled', () => {
+  // Test with 2 live inputs (default setup platform callback returns 2: TV and HDMI3)
+  const f2 = setup({ storage: { alvidaa_auto_switch: true } }), v2 = f2.instance;
+  v2.start();
+  assert.equal(v2.prefs.autoSwitch, true);
+  assert.equal(v2.autoSwitchAt, 0, 'must not start countdown when 2 inputs have signal');
+  v2.stop();
+
+  // Test with 0 live inputs
+  const f0 = setup({ storage: { alvidaa_auto_switch: true } }), v0 = f0.instance;
+  f0.root.AlvidaaNativePlatform = (_sdk, callback) => ({
+    start() {
+      callback({
+        apps: [],
+        sources: [
+          { sourceId: 'HDMI1', name: 'HDMI1', is_signal: 0 },
+          { sourceId: 'HDMI2', name: 'HDMI2', is_signal: 0 }
+        ],
+        errors: [], waiting: false
+      });
+    },
+    stop() {}
+  });
+  v0.start();
+  assert.equal(v0.autoSwitchAt, 0, 'must not start countdown when 0 inputs have signal');
+  v0.stop();
+});
+
+test('auto-switch: starts 3500ms countdown when exactly one live input and fires at zero', () => {
+  const f = setup({ storage: { alvidaa_auto_switch: true } }), v = f.instance;
+  f.root.AlvidaaNativePlatform = (_sdk, callback) => ({
+    start() {
+      f.calls.push(['start']);
+      callback({
+        apps: [],
+        sources: [
+          { sourceId: 'TV', name: 'TV', is_signal: 0 },
+          { sourceId: 'HDMI2', name: 'HDMI2', displayname2: 'PlayStation 5', is_signal: 1 }
+        ],
+        errors: [], waiting: false
+      });
+    },
+    stop() { f.calls.push(['stop']); },
+    changeSource(id) { f.calls.push(['source', id]); }
+  });
+  v.start();
+  assert.equal(v.autoSwitchId, 'HDMI2');
+  assert.equal(v.autoSwitchName, 'PlayStation 5');
+  assert.ok(v.autoSwitchAt > Date.now());
+
+  // HUD pill renders countdown message
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const flat = flatten(draw());
+  const hud = flat.find(n => n.data && n.data.attrs && n.data.attrs.role === 'status');
+  assert.ok(hud);
+  assert.equal(hud.data.style.opacity, 1);
+  assert.match(hud.children[0], /Switching to PlayStation 5 in \d+s - press any key to stay/);
+
+  // Fire timer at zero
+  assert.ok(f.timeouts.size > 0, 'auto-switch timeout should be registered');
+  for (const fn of f.timeouts.values()) fn();
+
+  assert.equal(v.autoSwitchAt, 0);
+  assert.equal(v.autoSwitchId, null);
+  assert.deepEqual(f.calls.at(-1), ['source', 'HDMI2']);
+  v.stop();
+});
+
+test('auto-switch: any handled key cancels countdown and shows toast', () => {
+  const f = setup({ storage: { alvidaa_auto_switch: true } }), v = f.instance, k = KEYS;
+  f.root.AlvidaaNativePlatform = (_sdk, callback) => ({
+    start() {
+      callback({
+        apps: [],
+        sources: [
+          { sourceId: 'HDMI2', name: 'HDMI2', displayname2: 'PlayStation 5', is_signal: 1 }
+        ],
+        errors: [], waiting: false
+      });
+    },
+    stop() {},
+    changeSource(id) { f.calls.push(['source', id]); }
+  });
+  v.start();
+  assert.ok(v.autoSwitchAt > 0);
+
+  // Pressing an unhandled key does not cancel
+  const unhandled = v.handleKey(999);
+  assert.equal(unhandled, false);
+  assert.ok(v.autoSwitchAt > 0);
+
+  // Pressing a navigation key cancels countdown
+  const handled = v.handleKey(k.ENTER);
+  assert.equal(handled, true);
+  assert.equal(v.autoSwitchAt, 0);
+  assert.equal(v.autoSwitchId, null);
+  assert.equal(v.toast, 'auto-switch cancelled');
+
+  // Verify changeSource was not called
+  assert.equal(f.calls.filter(c => c[0] === 'source').length, 0);
+  v.stop();
+});
+
+test('auto-switch: cancels on stop()', () => {
+  const f = setup({ storage: { alvidaa_auto_switch: true } }), v = f.instance;
+  f.root.AlvidaaNativePlatform = (_sdk, callback) => ({
+    start() {
+      callback({
+        apps: [],
+        sources: [
+          { sourceId: 'HDMI2', name: 'PlayStation', is_signal: 1 }
+        ],
+        errors: [], waiting: false
+      });
+    },
+    stop() {}
+  });
+  v.start();
+  assert.ok(v.autoSwitchAt > 0);
+  v.stop();
+  assert.equal(v.autoSwitchAt, 0);
+  assert.equal(v.autoSwitchId, null);
+  assert.equal(f.timeouts.size, 0);
   v.stop();
 });
