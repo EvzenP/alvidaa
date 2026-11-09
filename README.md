@@ -32,24 +32,55 @@ What this repo publishes, and what it deliberately does not:[docs/DISCLOSURE.md]
 | **contribute a report** | [TESTED-MODELS.md](docs/research/TESTED-MODELS.md) — PR, not issue |
 | **understand what's published and why** | [DISCLOSURE.md](docs/DISCLOSURE.md) |
 
-## The two lanes
+## Three ways to run the launcher
+
+Same page, three delivery mechanisms. Lanes 1 and 2 share everything except
+where the daemon runs; lane 3 is a different implementation.
+
+| | Where it runs | Root | State |
+| --- | --- | --- | --- |
+| **1. Bridge on a Pi or NAS** | a Go daemon on another box, plus a watcher that bounces the TV to it | no | **live.** The one most people should use, because it works without root |
+| **2. Bridge on the TV** | the same daemon on the TV's loopback, kept alive by the root hook | yes | **live** on the reference unit. No external hardware, no bounce target to lose |
+| **3. Native** | a component inside the vendor home engine | yes | **proven on two community units**, our own design unbuilt ([#35](https://github.com/carteakey/alvidaa/issues/35)) |
 
 ```
-LANE 1 — the launcher (no root needed)
+LANE 1 — bridge elsewhere (no root)
 
 ┌─────────────┐   WebSocket    ┌──────────────────┐   MQTT/TLS 36669   ┌─────────┐
-│ TV browser  │ ◄────────────► │ server (Pi)      │ ◄────────────────► │ VIDAA   │
-│ canvas page │  JSON pushes   │ config + watcher │  RemoteNow control │ TV      │
+│ TV browser  │ ◄────────────► │ Go bridge on a   │ ◄────────────────► │ VIDAA   │
+│ canvas page │  JSON pushes   │ Pi / NAS         │  RemoteNow control │ TV      │
 └─────────────┘                └──────────────────┘                    └─────────┘
 
-LANE 2 — the root chain (see the 50A51HUV guide)
+LANE 2 — bridge on the TV (root)
 
+┌─────────────┐   loopback     ┌──────────────────┐   MQTT/TLS 36669   ┌─────────┐
+│ TV browser  │ ◄────────────► │ alvidaa-bridge   │ ◄────────────────► │ VIDAA   │
+│ canvas page │  127.0.0.1     │ on the TV        │  RemoteNow control │ TV      │
+└─────────────┘                └──────────────────┘                    └─────────┘
+
+LANE 3 — native (root)
+
+vendor home engine ─► route[0].component for /Launcher replaced ─► our component
+                      (no browser, no bounce, stock Settings preserved)
+```
+
+Lanes 1 and 2 are the same page, the same protocol and the same `config.json`.
+Lane 3 is a Vue component using the vendor SDK, and cannot share the canvas page.
+[`launcher/README.md`](launcher/README.md) has the detail and
+[`tools/launcher-host/IMPLEMENTATIONS.md`](tools/launcher-host/IMPLEMENTATIONS.md)
+maps the lane-3 implementations.
+
+## The root chain
+
+Root is what enables lanes 2 and 3, and it is **model-specific**: the SoC and
+partition layout bite hard. The chain, stage by stage, is in
+[the 50A51HUV guide](docs/models/50A51HUV/09.01O.P0813/README.md), and the
+per-model deltas are in the guides under [`docs/models/`](docs/models/).
+
+```
 cert-gated MQTT ─► browser file bridge ─► ../ escape ─► unauth local API
     ─► rc.local boot hook ─► root at every boot ─► key-only SSH
 ```
-
-Lane 1 has been tested on the model below; compatibility with other models and firmware remains to be established. Lane 2 is **model-specific** (SoC and
-partition layout bite there) and is documented stage by stage in [the 50A51HUV guide](docs/models/50A51HUV/09.01O.P0813/README.md).
 
 ## Quickstart — the launcher
 
