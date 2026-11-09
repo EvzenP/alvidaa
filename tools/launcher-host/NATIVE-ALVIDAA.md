@@ -24,9 +24,13 @@ Two views, panned vertically like the canvas: view 1 is the dock, view 2 is the
 apps row. ArrowDown pans, ArrowUp or Back pans back. Back at the dock is handed
 to the vendor, so the stock behaviour from Home still works.
 
-No canvas, no iframe, no network fetch, no global CSS. Everything is inline
-style plus CSS gradients, which the 75U8QTUK findings confirmed paint on this
-engine.
+No canvas, no iframe, no global CSS. Everything is inline style plus CSS
+gradients, which the 75U8QTUK findings confirmed paint on this engine. The
+wallpaper is a PNG generated at build time and inlined as a data URI, so the
+candidate stays one self-contained file and the repo carries no image asset.
+
+The one network path is the vendor's own icon host, and only that host. See
+*Icons* below.
 
 ## Data contracts
 
@@ -43,22 +47,30 @@ The component consumes `native-platform.js`, which is where builds differ:
   hotel-mode checks
 - settings: `setting.open("settings")`
 
-### Icons: local only, brand colour as the fallback
+### Icons: local files, then the vendor host
 
-The component never fetches the open web. App records are checked for local
-icon fields only (`img`, `presetImg`, `icon`, `appIcon`, `icon_local_url`,
-`iconLocalUrl`, `localIcon`), and anything starting with `http` is rejected.
+App records are checked in order for `img`, `presetImg`, `icon`, `appIcon`,
+`icon_local_url`, `iconLocalUrl`, `localIcon`, `httpIcon` and `icon_web_url`.
+A `data:image…iconDownload<url>` trampoline is unwrapped first, because some
+builds wrap the URL that way.
 
-When a build only exposes remote icons, as this one does for most apps, the
-overlay draws a letter badge in the app's brand colour (Netflix red, YouTube
-red, Prime blue, Spotify green, Plex gold, and so on) rather than a random hue.
-That keeps the no-network property and still reads as the app.
+Two kinds of value are accepted:
 
-If you want real icons in lane 3, there are two honest options, both with a
-cost: accept the vendor's own icon host (what the stock launcher and the
-75U8QTUK port do, at the cost of a network fetch), or ship icons inside the
-component (at the cost of bundle size and a vendored asset). Neither is in this
-variant today.
+- **local** — `var/local/storeAppIcon/…`, `file:///…`, an absolute path, or an
+  inline `data:image` PNG/JPEG/WebP
+- **the vendor's icon host** — `https://*.vidaahub.com/…` only
+
+Anything else is refused, so this cannot become a general web client. That is
+the same host the stock launcher and the 75U8QTUK port load, and it is what
+gives real app icons on builds that expose no local files.
+
+When neither is available, the overlay draws a letter badge in the app's brand
+colour (Netflix red, YouTube red, Prime blue, Spotify green, Plex gold, and so
+on) rather than a random hue.
+
+If you want zero network access, drop the vidaahub rule in `allowedIcon()`.
+Every app then falls back to its badge, which is the trade the first version
+made.
 
 
 ## Build

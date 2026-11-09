@@ -10,15 +10,21 @@ const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { hash } = require('./native-trial.cjs');
+const wallpaper = require('./wallpaper.cjs');
 const PARTS = ['native-platform.js', 'native-alvidaa.js', 'native-entry.js'];
 const MARKER = 'ALVIDAA_NATIVE_HOME_V1';
 
-function build(stockFile, output, expect = STOCK_HASH) {
+function build(stockFile, output, expect) {
   assert.match(String(expect || ''), /^[0-9a-f]{64}$/,
     'expected sha256 of the stock bundle is required');
   const stock = fs.readFileSync(stockFile);
   assert.equal(hash(stock), expect, 'stock bundle does not match the pinned revision');
-  const candidate = '/* ' + MARKER + '\n * variant: native-alvidaa.js\n */\n' + stock + '\n;\n' +
+  // The wallpaper is generated here and inlined, so the candidate stays one
+  // self-contained file and the repo carries no image asset.
+  const art = 'self.AlvidaaNativeWallpaper="data:image/png;base64,' +
+    wallpaper.render().toString('base64') + '";';
+  const candidate = '/* ' + MARKER + '\n * variant: native-alvidaa.js\n */\n' + art + '\n' +
+    stock + '\n;\n' +
     PARTS.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n;\n');
   new vm.Script(candidate, { filename: 'native-candidate.js' });
   if (output) {

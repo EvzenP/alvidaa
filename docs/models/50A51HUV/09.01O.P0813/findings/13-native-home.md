@@ -142,6 +142,25 @@ The two variants are interchangeable on this build because they share the
 platform adapter and the entry. Only the component file changes, which is the
 shape the variant picker should preserve.
 
+### Quality pass (same day)
+
+Three changes, deployed through `native-install.cjs` rather than by hand:
+
+- **Real icons where the build has them.** The component now accepts local icon
+  fields and the vendor's own host (`https://*.vidaahub.com/…`), and unwraps the
+  `data:image…iconDownload<url>` trampoline some builds use. Nothing else is
+  fetched. Apps with neither fall back to a brand-coloured letter badge.
+- **A generated wallpaper.** `wallpaper.cjs` renders a 1920×1080 PNG at build
+  time and the build inlines it as a data URI, so the candidate stays one file
+  and the repo carries no image asset.
+- **A denser dock.** Six tiles per page at 264×180 (was five at 320×176), and a
+  6×4 app grid (was 5×3). Focused tiles lift 3%.
+
+Verified from the frame: tile edges at 112→376 and 396→660 (264 wide, 20 gap),
+the focused tile extending ~4 px past its bounds (the 1.03 scale), and the
+wallpaper measurably brighter bottom-right than top-left. The app overlay's
+icons were not exercised on screen; they are covered by tests only.
+
 ## Teardown / rollback
 
 ```

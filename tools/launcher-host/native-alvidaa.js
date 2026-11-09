@@ -5,26 +5,29 @@
  * supplies apps and inputs through the vendor SDK, and native-home.cjs
  * installs and restores. Only the design lives here.
  *
- * Design, ported from launcher/index.html r4:
+ * Design, ported from launcher/index.html r4 and tightened:
  *   - clock and date, top left
- *   - the inputs dock at the bottom edge, five tiles per page
+ *   - the inputs dock at the bottom edge, six tiles per page
  *   - the focused input's real name in large type above the dock, with a
  *     connected / no-signal line under it
  *   - one Apps tile that opens the app list as an overlay
  *   - a Settings tile that opens the real stock TV Settings
  *
  * Two views, panned vertically like the canvas: view 1 is the dock, view 2 is
- * the apps row. No canvas, no iframe, no network fetch, no global CSS.
+ * the apps row. No canvas, no iframe, no global CSS.
  *
- * Unverified on hardware. Contracts come from the 55A7KAU and 75U8QTUK
- * findings; the platform adapter is the place where builds differ.
+ * Icons: local files first, then the vendor's own icon host. Anything else is
+ * refused, so this never becomes a general web client. The wallpaper is a
+ * build-time data URI (self.AlvidaaNativeWallpaper); when it is absent, as in
+ * tests, the component falls back to CSS gradients.
  */
 (function (root) {
   "use strict";
-  var DOCK_SIZE = 320, DOCK_HEIGHT = 176, DOCK_GAP = 24, DOCK_PAGE = 5;
-  var OVERLAY_COLS = 5, OVERLAY_CELL = 192;
+  var DOCK_SIZE = 264, DOCK_HEIGHT = 180, DOCK_GAP = 20, DOCK_PAGE = 6;
+  var OVERLAY_COLS = 6, OVERLAY_CELL = 176;
+  var ICON = 80;
   // Brand colours, so a letter badge reads as the app rather than as a random
-  // hue. Only used when the build gives us no local icon; no network fetch.
+  // hue. Only used when the build gives us no icon.
   var BRANDS = [
     [/netflix/i, "#b20710"],
     [/youtube/i, "#c4302b"],
@@ -63,6 +66,25 @@
       return value === 1 || value === "1" || value === true;
     }
     function text(value) { return typeof value === "string" ? value.trim() : ""; }
+    // Some builds wrap the icon URL in a data:image trampoline.
+    function unwrap(value) {
+      if (typeof value !== "string") return "";
+      var marker = "iconDownload";
+      if (value.indexOf("data:image") === 0 && value.indexOf(marker) >= 0) {
+        return value.slice(value.indexOf(marker) + marker.length);
+      }
+      return value;
+    }
+    function allowedIcon(value) {
+      if (!value) return "";
+      if (/^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i.test(value)) {
+        return value;
+      }
+      // The vendor's own icon host only. This is what the stock launcher and
+      // the 75U8QTUK port load; nothing else is fetched.
+      if (/^https:\/\/([a-z0-9-]+\.)*vidaahub\.com\//i.test(value)) return value;
+      return "";
+    }
 
     return {
       name: "Launcher", // The shared shell's keep-alive list uses this name.
@@ -154,15 +176,14 @@
           }
           return label;
         },
-        localIcon: function (app) {
-          // Local fields only. Remote icons would mean the native Home fetches
-          // the open web, which this component deliberately does not do.
+        appIcon: function (app) {
           var candidates = [app.img, app.presetImg, app.icon, app.appIcon,
-            app.icon_local_url, app.iconLocalUrl, app.localIcon];
-          var icon = candidates.filter(function (value) {
-            return typeof value === "string" &&
-              /^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i.test(value);
-          })[0] || "";
+            app.icon_local_url, app.iconLocalUrl, app.localIcon,
+            app.httpIcon, app.icon_web_url];
+          var icon = "";
+          for (var i = 0; i < candidates.length && !icon; i++) {
+            icon = allowedIcon(unwrap(candidates[i]));
+          }
           return icon.indexOf("var/local/storeAppIcon/") === 0 ? "file:///hisenseUI/" + icon : icon;
         },
         dockItems: function () { return this.sources; },
@@ -346,13 +367,13 @@
           } else {
             // Minimal hardware display icon, same as the canvas fallback.
             var ink = focused ? "rgba(255,255,255,0.9)" : "rgba(148,163,184,0.6)";
-            tile.push(h("div", { style: box(132, 46, 56, 34, {
+            tile.push(h("div", { style: box((DOCK_SIZE - 56) / 2, 46, 56, 34, {
               border: "3px solid " + ink, borderRadius: 6
             }) }));
-            tile.push(h("div", { style: box(158, 80, 4, 8, { backgroundColor: ink }) }));
-            tile.push(h("div", { style: box(148, 88, 24, 3, { backgroundColor: ink }) }));
+            tile.push(h("div", { style: box(DOCK_SIZE / 2 + 2, 80, 4, 8, { backgroundColor: ink }) }));
+            tile.push(h("div", { style: box(DOCK_SIZE / 2 - 12, 88, 24, 3, { backgroundColor: ink }) }));
           }
-          tile.push(h("div", { style: box(0, 122, DOCK_SIZE, 40, {
+          tile.push(h("div", { style: box(0, DOCK_HEIGHT - 54, DOCK_SIZE, 40, {
             fontSize: 26, lineHeight: 40, textAlign: "center",
             color: focused ? "#ffffff" : "#94a3b8"
           }) }, [this.sourceName(input)]));
@@ -421,17 +442,22 @@
           transition: "transform 350ms ease-out"
         } }, nodes);
 
+        var wallpaper = root.AlvidaaNativeWallpaper;
         var layers = [
-          // Ambient bloom, pure CSS, no image and no network request.
-          h("div", { style: {
+          wallpaper ? h("div", { style: {
+            position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+            backgroundImage: "url(" + JSON.stringify(wallpaper) + ")",
+            backgroundSize: "cover", backgroundPosition: "center"
+          } }) : h("div", { style: {
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
             pointerEvents: "none",
             backgroundImage: "linear-gradient(180deg, rgba(56,189,248,0.06), rgba(99,102,241,0.02) 40%, rgba(7,8,12,0) 70%)"
           } }),
+          // Contrast wash so text and tiles stay readable over the wallpaper.
           h("div", { style: {
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
             pointerEvents: "none",
-            backgroundImage: "linear-gradient(315deg, rgba(99,102,241,0.10), rgba(7,8,12,0) 55%)"
+            backgroundColor: "rgba(6,8,12,0.55)"
           } }),
           stage,
           h("div", { style: box(112, 1040, null, null, {
@@ -441,7 +467,7 @@
 
         // ---- the app list overlay -----------------------------------------
         if (this.overlay) {
-          var panelX = 64, panelY = 180, panelW = 1792, panelH = 720;
+          var panelX = 64, panelY = 140, panelW = 1792, panelH = 800;
           var rows = Math.max(1, Math.floor((panelH - 96) / OVERLAY_CELL));
           var firstRow = Math.max(0, Math.floor(this.overlayIndex / OVERLAY_COLS) - rows + 1);
           var first = firstRow * OVERLAY_COLS;
@@ -466,32 +492,32 @@
             var selected = this.overlayIndex === a;
             var cellX = panelX + 56 + col * cellW;
             var cellY = panelY + 96 + row * OVERLAY_CELL;
-            var icon = this.localIcon(app);
+            var icon = this.appIcon(app);
             var cell = [];
             if (icon) {
               // backgroundImage, not an img node: the img path did not paint
               // cached icons on the Cobalt builds this was tested against.
-              cell.push(h("div", { style: box(0, 26, cellW - 16, 72, {
+              cell.push(h("div", { style: box(0, 20, cellW - 16, ICON, {
                 backgroundImage: "url(" + JSON.stringify(icon) + ")",
                 backgroundSize: "contain", backgroundPosition: "center",
                 backgroundRepeat: "no-repeat"
               }) }));
             } else {
               var badge = brand(app.appName);
-              cell.push(h("div", { style: box((cellW - 16 - 72) / 2, 26, 72, 72, {
-                borderRadius: 18, backgroundColor: badge, overflow: "hidden"
+              cell.push(h("div", { style: box((cellW - 16 - ICON) / 2, 20, ICON, ICON, {
+                borderRadius: 20, backgroundColor: badge, overflow: "hidden"
               }) }, [
-                h("div", { style: box(0, 0, 72, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
-                h("div", { style: box(0, 0, 72, 72, {
-                  fontSize: 34, lineHeight: 72, textAlign: "center",
+                h("div", { style: box(0, 0, ICON, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
+                h("div", { style: box(0, 0, ICON, ICON, {
+                  fontSize: 38, lineHeight: ICON, textAlign: "center",
                   fontWeight: "700", color: "#ffffff"
                 }) }, [String(app.appName || "?").charAt(0).toUpperCase()])
               ]));
             }
             var name = String(app.appName || "");
-            if (name.length > 18) name = name.slice(0, 17) + "\u2026";
-            cell.push(h("div", { style: box(0, OVERLAY_CELL - 60, cellW - 16, 36, {
-              fontSize: 22, lineHeight: 36, textAlign: "center",
+            if (name.length > 20) name = name.slice(0, 19) + "\u2026";
+            cell.push(h("div", { style: box(0, OVERLAY_CELL - 56, cellW - 16, 34, {
+              fontSize: 22, lineHeight: 34, textAlign: "center",
               color: selected ? "#f8fafc" : "#94a3b8"
             }) }, [name]));
             panel.push(h("div", {

@@ -159,9 +159,9 @@ test('app overlay pages, launches and clamps at both ends', () => {
   v.handleKey(k.RIGHT);
   assert.equal(v.overlayIndex, 1);
   v.handleKey(k.DOWN);
-  assert.equal(v.overlayIndex, 6);
+  assert.equal(v.overlayIndex, 7);
   v.handleKey(k.ENTER);
-  assert.deepEqual(f.calls.at(-1), ['launch', '6']);
+  assert.deepEqual(f.calls.at(-1), ['launch', '7']);
   assert.equal(v.overlay, false);
   v.overlay = true;
   v.overlayIndex = 11;
@@ -264,6 +264,38 @@ test('the apps row pans into view and the overlay paints local icons only', () =
   v.stop();
 });
 
+test('icon policy: local files and the vendor host only', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(v.appIcon({ img: 'var/local/storeAppIcon/x.png' }), 'file:///hisenseUI/var/local/storeAppIcon/x.png');
+  assert.equal(v.appIcon({ img: 'file:///local/x.png' }), 'file:///local/x.png');
+  assert.equal(v.appIcon({ img: 'https://img.vidaahub.com/a/b.png' }), 'https://img.vidaahub.com/a/b.png');
+  assert.equal(v.appIcon({ img: 'https://cdn.example/x.png' }), '');
+  assert.equal(v.appIcon({ img: 'http://img.vidaahub.com/x.png' }), '');
+  assert.equal(v.appIcon({ icon_local_url: '/data/x.png' }), '/data/x.png');
+  // Some builds wrap the URL in a data:image trampoline.
+  assert.equal(v.appIcon({ httpIcon: 'data:image/png;base64,zzziconDownloadhttps://img.vidaahub.com/x.png' }),
+    'https://img.vidaahub.com/x.png');
+  v.stop();
+});
+
+test('the dock pages six at a time and the wallpaper is a build-time global', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.sources = Array.from({ length: 8 }, (_, i) => ({ sourceId: i, name: 'In ' + i }));
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const flat = flatten(draw());
+  const tiles = flat.filter(n => (n.children || []).some(c => c === 'LIVE' || c === 'STANDBY'));
+  assert.equal(tiles.length, 6);
+  assert.ok(flat.some(n => n.data && n.data.style && n.data.style.backgroundImage &&
+    n.data.style.backgroundImage.indexOf('linear-gradient(180deg, rgba(56,189,248') === 0));
+  f.root.AlvidaaNativeWallpaper = 'data:image/png;base64,AAA';
+  const withArt = flatten(draw()).filter(n => n.data && n.data.style &&
+    n.data.style.backgroundImage === 'url("data:image/png;base64,AAA")');
+  assert.equal(withArt.length, 1);
+  v.stop();
+});
+
 test('entry prefers the alvidaa variant, falls back to Free My TV, and only swaps Home', () => {
   function run(globals) {
     const context = Object.assign({
@@ -307,6 +339,7 @@ test('build refuses an unpinned stock bundle and assembles a runnable candidate'
   const candidate = build(stockFile, null, digest);
   assert.ok(candidate.startsWith('/* ' + MARKER));
   assert.ok(candidate.includes(stock));
+  assert.ok(candidate.includes('AlvidaaNativeWallpaper="data:image/png;base64,'));
   for (const part of PARTS) assert.ok(candidate.includes(part));
   const context = {
     key: { KEYMAP: {} },

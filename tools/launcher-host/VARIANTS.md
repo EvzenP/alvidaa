@@ -78,7 +78,8 @@ node tools/launcher-host/native-install.cjs status --model 50a51huv --host <tv-i
 
 1. Write the component, set `root.AlvidaaNativeComponent` (or reuse the
    `AlvidaaFreeMyTV` fallback), and keep it to inline styles: no canvas, no
-   iframe, no network fetch.
+   iframe, no general web access. Icons may come from local files or the
+   vendor's own host; see [NATIVE-ALVIDAA.md](NATIVE-ALVIDAA.md).
 2. Add a build script with the uniform signature
    `build(stockFile, output, expect)` and export `PARTS`.
 3. Add the entry to `variants.json` with an empty `verified` list.
