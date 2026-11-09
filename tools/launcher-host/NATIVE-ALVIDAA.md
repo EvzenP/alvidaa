@@ -20,6 +20,7 @@ The design is the canvas launcher's r4 layout, ported to DOM:
 | Apps tile | one door; opens the app list as an overlay, 5-column grid |
 | Settings tile | opens the real stock TV Settings |
 | toast HUD | bottom center, floating glass pill for action feedback and alerts (default 2500ms, timed expiry) |
+| number hotkeys | remote keys 1-9 focus & activate dock tiles 1-9; key 0 focuses dock 0 without activating |
 
 Two views, panned vertically like the canvas: view 1 is the dock, view 2 is the
 apps row. ArrowDown pans, ArrowUp or Back pans back. Back at the dock is handed
@@ -56,6 +57,16 @@ Feedback and error messages are displayed via a floating glass HUD pill rendered
 - `showToast(text, ms)` sets the active message and deadline, defaulting to 2500ms if unspecified.
 - Action failures from `run()`, empty overlay notices ("No apps reported"), and activation notices route through `showToast`.
 - The 1s clock interval drives toast expiry, clearing expired messages and triggering smooth opacity and transform transitions.
+
+### Remote number hotkeys
+
+Hardware remote number keys `0` through `9` are mapped from `sdk.key.KEYMAP` (`NUM_0` .. `NUM_9`), guarded against undefined values:
+
+- In the dock zone, keys `1`–`9` focus and activate the corresponding dock index (`digit - 1`) when it exists.
+- Key `0` focuses dock index `0` without activating, resetting focus to the first input.
+- Out-of-range digits (or digits when no inputs exist) are not swallowed and pass through unhandled (`return false`).
+- Digits do not fire when the app list overlay is open.
+- Dock tiles render a subtle numeral keycap badge for inputs 1–9.
 
 ### Icons: local files, then the vendor host
 
@@ -153,5 +164,6 @@ node --test tools/launcher-host/native-alvidaa.test.cjs
 Covers start/stop idempotence, app and input filtering, storage preferences
 (hidden/only apps, custom input names, last-used fallback, absent storage),
 name precedence, smart focus, dock and overlay navigation, Back ownership,
-action failures, toast HUD timing and expiry, render structure and scaling,
-the entry's variant selection, and the build's hash and output guards.
+action failures, toast HUD timing and expiry, remote number hotkeys (0-9),
+render structure and scaling, the entry's variant selection, and the build's
+hash and output guards.

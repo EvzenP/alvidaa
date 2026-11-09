@@ -9,7 +9,9 @@ const { hash } = require('./native-trial.cjs');
 const SOURCE = fs.readFileSync(path.join(__dirname, 'native-alvidaa.js'), 'utf8');
 const ENTRY = fs.readFileSync(path.join(__dirname, 'native-entry.js'), 'utf8');
 const KEYS = { HOME: 36, LAUNCHER: 547, SOURCE: 515, KEYPAD_INPUT: 516,
-  UP: 38, DOWN: 40, LEFT: 37, RIGHT: 39, ENTER: 13, BACK: 8, RETURN: 461 };
+  UP: 38, DOWN: 40, LEFT: 37, RIGHT: 39, ENTER: 13, BACK: 8, RETURN: 461,
+  NUM_0: 48, NUM_1: 49, NUM_2: 50, NUM_3: 51, NUM_4: 52,
+  NUM_5: 53, NUM_6: 54, NUM_7: 55, NUM_8: 56, NUM_9: 57 };
 
 function setup(options = {}) {
   const calls = [], timers = new Map();
@@ -254,6 +256,84 @@ test('toast HUD manages timing, expiry, and floating glass pill presentation', (
   v.openOverlay();
   assert.equal(v.toast, 'No apps reported');
   assert.equal(v.overlay, false);
+
+  v.stop();
+});
+
+test('remote number hotkeys 1-9 focus and activate dock items, 0 focuses without activating', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  // Provide 10 sources so digits 1-9 are all in range
+  v.sources = Array.from({ length: 10 }, (_, i) => ({ sourceId: 'in' + i, name: 'Input ' + i }));
+  v.zone = 'dock';
+  v.dock = 0;
+
+  // Digits 1 through 9 focus and activate matching dock index (digit - 1)
+  for (let d = 1; d <= 9; d++) {
+    const key = k['NUM_' + d];
+    const initialSourceCalls = f.calls.filter(c => c[0] === 'source').length;
+    const handled = v.handleKey(key);
+    assert.equal(handled, true, 'NUM_' + d + ' must be handled');
+    assert.equal(v.dock, d - 1, 'NUM_' + d + ' must set dock index to ' + (d - 1));
+    assert.equal(f.calls.filter(c => c[0] === 'source').length, initialSourceCalls + 1, 'NUM_' + d + ' must trigger activation');
+    assert.deepEqual(f.calls.at(-1), ['source', 'in' + (d - 1)]);
+  }
+
+  // Digit 0 focuses dock 0 without activating
+  v.dock = 5;
+  const sourceCallsBeforeZero = f.calls.filter(c => c[0] === 'source').length;
+  const handledZero = v.handleKey(k.NUM_0);
+  assert.equal(handledZero, true, 'NUM_0 must be handled');
+  assert.equal(v.dock, 0, 'NUM_0 must focus dock index 0');
+  assert.equal(f.calls.filter(c => c[0] === 'source').length, sourceCallsBeforeZero, 'NUM_0 must not trigger activation');
+
+  // Out-of-range digits pass through (e.g. source count is 3, digit 4..9)
+  v.sources = [
+    { sourceId: 'in0', name: 'In 0' },
+    { sourceId: 'in1', name: 'In 1' },
+    { sourceId: 'in2', name: 'In 2' }
+  ];
+  v.dock = 1;
+  const sourceCallsBeforeOOR = f.calls.filter(c => c[0] === 'source').length;
+  assert.equal(v.handleKey(k.NUM_4), false, 'out-of-range digit 4 must return false');
+  assert.equal(v.handleKey(k.NUM_9), false, 'out-of-range digit 9 must return false');
+  assert.equal(v.dock, 1, 'out-of-range digit must not change dock focus');
+  assert.equal(f.calls.filter(c => c[0] === 'source').length, sourceCallsBeforeOOR, 'out-of-range digit must not trigger activation');
+
+  // 0 with empty dock passes through
+  v.sources = [];
+  assert.equal(v.handleKey(k.NUM_0), false, '0 with empty dock must return false');
+  assert.equal(v.handleKey(k.NUM_1), false, '1 with empty dock must return false');
+
+  v.stop();
+});
+
+test('remote number hotkeys do not fire while overlay is open and handle missing KEYMAP', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  v.sources = Array.from({ length: 5 }, (_, i) => ({ sourceId: 'in' + i, name: 'In ' + i }));
+  v.dock = 0;
+  v.apps = [{ appId: '1', appName: 'App 1' }];
+
+  // Open overlay
+  v.zone = 'apps';
+  v.openOverlay();
+  assert.equal(v.overlay, true);
+
+  const callsBefore = f.calls.length;
+  assert.equal(v.handleKey(k.NUM_1), false, 'NUM_1 must not fire while overlay is open');
+  assert.equal(v.handleKey(k.NUM_0), false, 'NUM_0 must not fire while overlay is open');
+  assert.equal(f.calls.length, callsBefore);
+  assert.equal(v.dock, 0);
+
+  // Missing KEYMAP in SDK key
+  const guardedComp = f.root.AlvidaaNativeHome({ key: { KEYMAP: {} } });
+  const guardedInstance = guardedComp.data();
+  guardedInstance.dock = 0;
+  guardedInstance.sources = [{ sourceId: 1, name: 'In 1' }];
+  for (const [key, fn] of Object.entries(guardedComp.methods)) guardedInstance[key] = fn.bind(guardedInstance);
+  assert.equal(guardedInstance.handleKey(49), false, 'unmapped number key must pass through');
+  assert.equal(guardedInstance.handleKey(48), false, 'unmapped 0 key must pass through');
 
   v.stop();
 });

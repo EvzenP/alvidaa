@@ -46,7 +46,11 @@
   ];
 
   function create(sdk) {
-    var keys = sdk.key.KEYMAP;
+    var keys = (sdk && sdk.key && sdk.key.KEYMAP) || {};
+    var numKeys = {};
+    for (var d = 0; d <= 9; d++) {
+      if (keys["NUM_" + d] != null) numKeys[keys["NUM_" + d]] = d;
+    }
 
     function p2(n) { return (n < 10 ? "0" : "") + n; }
     function hue(value) {
@@ -372,6 +376,28 @@
             this.clamp();
             return true;
           }
+          if (Object.prototype.hasOwnProperty.call(numKeys, code)) {
+            var digit = numKeys[code];
+            if (this.zone === "dock") {
+              var dock = this.dockItems();
+              if (digit === 0) {
+                if (dock.length > 0) {
+                  this.dock = 0;
+                  this.clamp();
+                  return true;
+                }
+                return false;
+              }
+              var idx = digit - 1;
+              if (idx < dock.length) {
+                this.dock = idx;
+                this.clamp();
+                this.activate();
+                return true;
+              }
+              return false;
+            }
+          }
           if (code === keys.BACK || code === keys.RETURN) {
             // Back closes our own layers, then belongs to the vendor again.
             if (this.zone === "apps") { this.zone = "dock"; return true; }
@@ -466,6 +492,15 @@
               }) }, [liveInput ? "LIVE" : "STANDBY"])
             ])
           ];
+          if (i < 9) {
+            tile.push(h("div", { style: box(DOCK_SIZE - 48, 16, 32, 32, {
+              borderRadius: 8,
+              backgroundColor: focused ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.05)",
+              border: "1px solid " + (focused ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.08)"),
+              fontSize: 18, lineHeight: 32, textAlign: "center", fontWeight: "600",
+              color: focused ? "#ffffff" : "rgba(148,163,184,0.7)"
+            }) }, [String(i + 1)]));
+          }
           if (text(input.glyph)) {
             tile.push(h("div", { style: box(0, 42, DOCK_SIZE, 60, {
               fontSize: 52, lineHeight: 60, textAlign: "center",
