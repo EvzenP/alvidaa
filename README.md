@@ -234,6 +234,22 @@ Prior art and the safety stance are in [Credits & safety](#credits--safety) belo
 
 ## Credits & safety
 
+### Prior art
+
+The two projects closest to this one work the same problem on Android
+televisions: [dumbtv](https://github.com/humblemuzzu/dumbtv) cleans up Fire TV /
+Fire OS over ADB and replaces the home screen with its own 107 KB launcher, and
+[CleanMyTV](https://github.com/wingedpanther/cleanmytv) does the same for
+Android TV and Google TV from a Mac/Windows app. They are the reference points
+for what a cleaned-up, ad-free TV looks like, and neither supports VIDAA —
+both are Android work, and Fire OS, Android TV and Google TV all speak ADB and
+have a package manager. A VIDAA TV has neither: its home screen is not an app
+but a Cobalt/JS bundle inside the vendor's own `operation-ui` module, so
+replacing it means editing that bundle on the TV, which is what
+[lane 3](#three-ways-to-run-the-launcher) does. A feature-by-feature comparison
+and what a native port borrows from them:
+[EXISTING-LAUNCHERS.md](docs/launcher/EXISTING-LAUNCHERS.md).
+
 Built on the shoulders of [Bananamafia's hisensehax](https://bananamafia.dev/post/hisensehax/),
 [d3nd3/Hisense-mqtt-keyfiles](https://github.com/d3nd3/Hisense-mqtt-keyfiles),
 [Krazy998/mqtt-hisensetv](https://github.com/Krazy998/mqtt-hisensetv),
