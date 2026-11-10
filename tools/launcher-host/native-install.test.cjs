@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { hash, CONFIG } = require('./native-trial.cjs');
 const { VARIANTS, MODELS, variant, model, verified, checkPair, parse,
   install, rollback, status, syncWatcher,
-  applyWatcherConfig, watcherState, WATCHER_BACKUP } = require('./native-install.cjs');
+  applyWatcherConfig, watcherState, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY } = require('./native-install.cjs');
 
 const HERE = __dirname;
 const REPO = path.resolve(HERE, '../..');
@@ -261,6 +261,31 @@ test('restore reproduces the original bytes and keeps the backup', t => {
   assert.deepEqual(tv.files.get(WATCHER_BACKUP), original); // kept for the next rollback
   syncWatcher(opts, M, 'restore'); // a second rollback is a harmless no-op
   assert.deepEqual(tv.files.get(CONFIG), original);
+});
+
+// The 2026-11-09 session disabled the watcher by hand and left the true original
+// at .bak-nativetest. On that TV the live config is ALREADY watcher-off, so a
+// naive "snapshot the live config" would record off as the original and rollback
+// would then leave the canvas launcher dead. Seed from the legacy backup.
+test('a pre-native legacy backup is preferred over an already-disabled live config', t => {
+  const legacy = JSON.stringify({ watcher: { enabled: true, app: 'Home' }, untouched: 123 }, null, 2);
+  const alreadyOff = JSON.stringify({ watcher: { enabled: false, app: 'Home' }, untouched: 123 }, null, 2);
+  const tv = watcherFixture(t, alreadyOff);
+  tv.files.set(WATCHER_BACKUP_LEGACY, Buffer.from(legacy));
+  syncWatcher({ ssh: tv.ssh, model: '50a51huv' }, M, 'disable');
+  // The backup holds the pre-native original (watcher ON), not the live file.
+  assert.deepEqual(tv.files.get(WATCHER_BACKUP), Buffer.from(legacy));
+  assert.equal(JSON.parse(tv.files.get(WATCHER_BACKUP).toString()).watcher.enabled, true);
+  // So rollback hands the watcher back on, which is what the canvas launcher needs.
+  syncWatcher({ ssh: tv.ssh, model: '50a51huv' }, M, 'restore');
+  assert.deepEqual(tv.files.get(CONFIG), Buffer.from(legacy));
+  assert.equal(JSON.parse(tv.files.get(CONFIG).toString()).watcher.enabled, true);
+});
+
+test('with no legacy backup the live config is still snapshotted, as before', t => {
+  const tv = watcherFixture(t);
+  syncWatcher({ ssh: tv.ssh, model: '50a51huv' }, M, 'disable');
+  assert.deepEqual(tv.files.get(WATCHER_BACKUP), Buffer.from(ORIGINAL));
 });
 
 test('restore recreates the config if it vanished, still byte-for-byte', t => {

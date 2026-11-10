@@ -165,6 +165,12 @@ function runSwitch(opts, m, mode) {
 // truncating redirect on the live file.
 const WATCHER_BACKUP = CONFIG + '.bak-native-home';
 const WATCHER_TMP = CONFIG + '.tmp-native-home';
+// The 2026-11-09 lane-3 session disabled the watcher by hand and left the true
+// original here (HANDOFF-2026-11-09-LANE3, "The one thing to know"). On a TV
+// that already has it, the LIVE config is already watcher-off — so snapshotting
+// the live file would record "off" as the original, and rollback would then
+// leave the canvas launcher dead. Seed from the legacy backup when it exists.
+const WATCHER_BACKUP_LEGACY = CONFIG + '.bak-nativetest';
 
 // Pure: given config text and a mode, return the text to write, or refuse.
 //   disable — text is the live config; the result is the same config with
@@ -226,7 +232,17 @@ function syncWatcher(opts, m, mode) {
         ' — is the bridge deployed on this TV? nothing written');
     }
     const after = applyWatcherConfig(read(CONFIG), 'disable'); // refuses before anything is backed up or written
-    sshFn(opts)(opts, P + 'test -f ' + WATCHER_BACKUP + ' || cp -p ' + CONFIG + ' ' + WATCHER_BACKUP);
+    if (!exists(WATCHER_BACKUP)) {
+      // Prefer the pre-native backup over the live file: the live config may
+      // already be watcher-off from a manual session, and restoring that on
+      // rollback would be wrong.
+      if (exists(WATCHER_BACKUP_LEGACY)) {
+        sshFn(opts)(opts, P + 'cp -p ' + WATCHER_BACKUP_LEGACY + ' ' + WATCHER_BACKUP);
+        console.log('watcher: original seeded from the pre-native backup ' + WATCHER_BACKUP_LEGACY);
+      } else {
+        sshFn(opts)(opts, P + 'cp -p ' + CONFIG + ' ' + WATCHER_BACKUP);
+      }
+    }
     stage(CONFIG, after);
     console.log('watcher: disabled in ' + CONFIG + ' (original preserved at ' + WATCHER_BACKUP + ')');
     return;
@@ -410,4 +426,4 @@ if (require.main === module) {
 }
 
 module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap,
-  applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP };
+  applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY };
