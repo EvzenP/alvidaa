@@ -102,7 +102,13 @@
     }
     function allowedInputArt(value) {
       if (typeof value !== "string" || !value) return "";
-      if (/^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i.test(value)) {
+      // svg+xml is here for the bundled device silhouettes (device-art.cjs):
+      // an SVG rendered in an <img> or a background-image cannot execute
+      // script, the URI is still local (nothing is fetched), and it is ~700
+      // bytes against a raster's kilobytes. Only the base64 form is accepted
+      // — an unencoded data:image/svg+xml, URL is a different parser path
+      // that this allowlist deliberately does not follow.
+      if (/^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp|svg\+xml);base64,)/i.test(value)) {
         return value;
       }
       return "";

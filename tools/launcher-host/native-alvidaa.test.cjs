@@ -1022,6 +1022,31 @@ test('input art: a remote URL in the map is still refused and the wallpaper is u
   v.stop();
 });
 
+test('input art: an inline SVG data URI is accepted and a remote URL still refused', () => {
+  const f = setup(), v = f.instance;
+  // The device silhouettes (device-art.cjs) arrive as base64 SVG data URIs.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#94a3b8"><rect x="2" y="7" width="20" height="15" rx="2"/></svg>';
+  const svgUri = 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64');
+  // The unencoded form stays out: only the base64 shape is allowlisted.
+  const rawUri = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>';
+  f.root.AlvidaaNativeInputArt = { hdmi2: svgUri, hdmi3: rawUri, tv: 'https://evil.com/art.svg' };
+  v.start();
+  v.dock = 1;
+  v.syncArt();
+  let flat = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  const incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  assert.ok(incoming, 'the SVG silhouette renders as the backdrop');
+  assert.match(incoming.data.style.backgroundImage, /data:image\/svg\+xml;base64,/);
+  v.dock = 2;
+  v.syncArt();
+  flat = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  assert.equal(flat.filter(n => n.data && n.data.style && n.data.style.backgroundImage &&
+    (n.data.style.backgroundImage.includes('evil.com') ||
+     /svg\+xml,</.test(n.data.style.backgroundImage))).length, 0,
+    'a remote URL and an unencoded SVG URI both stay off the canvas');
+  v.stop();
+});
+
 test('build script embeds AlvidaaNativeInputArt when present and works unchanged when absent', () => {
   const { build } = require('./build-native-alvidaa.cjs');
   const os = require('node:os');
