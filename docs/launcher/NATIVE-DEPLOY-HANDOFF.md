@@ -88,9 +88,13 @@ tools/screenshot.sh /tmp/native-home.png
 
 Notes that save a debugging round:
 
-- **The watcher is handled.** The install path sets
-  `config.watcher.enabled = false` itself (`native-trial.cjs:152`), so issue
-  #47's manual `sed` is not needed for this installer.
+- **The watcher is handled.** Both install paths own it now: `native-home.cjs`
+  sets `config.watcher.enabled = false` itself (`native-trial.cjs:152`), and
+  the variant picker CLI (`native-install.cjs`) does the same on
+  install/switch and restores the pre-native config from
+  `config.json.bak-native-home` on rollback. There is no manual step left;
+  see [VARIANTS.md](../../tools/launcher-host/VARIANTS.md), "What the
+  installer guarantees".
 - **Rollback** is `native-home.cjs restore` on the TV (root, no host argument):
   it restores from the state manifest in `/var/local/alvidaa/native-home/` and
   restarts the engine.
