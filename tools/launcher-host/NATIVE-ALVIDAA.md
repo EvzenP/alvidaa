@@ -187,16 +187,22 @@ no such global and fall back to `AlvidaaFreeMyTV`.
    ./server/tv id
    ```
    *Claim: Root shell responds with uid=0(root) gid=0(root).*
-2. **Writable bundle verification**: Check target model filesystem for writable `/APPS/channelA/hisenseUI/`:
+2. **Writable bundle verification**: Check the target model's launcher bundle. On the
+   reference `50A51HUV` / `09.01O.P0813` that is the writable `operation-ui`
+   module, not `hisenseUI` — `native-trial.cjs` pins `APP` to it:
    ```sh
-   ./server/tv 'ls -ld /APPS/channelA/hisenseUI'
+   ./server/tv 'ls -ld /APPS/channelA/operation-ui/apps/launcher/js'
    ```
-   *Claim: Build contains writable hisenseUI package and no blocking operationui module (as on 50A51HUV / 09.01O.P0813).*
+   *Claim: the build exposes a writable launcher bundle at that path. If it does
+   not, lane 3 does not apply to that build.*
 3. **Preflight and pin stock bundle**: Record exact size, owner, permissions, and hashes before modifying:
    ```sh
-   ./server/tv 'md5sum /APPS/channelA/hisenseUI/dist/app.js; sha256sum /APPS/channelA/hisenseUI/dist/app.js'
+   ./server/tv 'md5sum /APPS/channelA/operation-ui/apps/launcher/js/app.js; sha256sum /APPS/channelA/operation-ui/apps/launcher/js/app.js'
    ```
-   Save the output and verify against the expected hash.
+   The reference build's pinned sha256 is
+   `046b41aee0242ced3d3fcd9d5e0c0adb68e17ea3bfe14efa13d6225b6050bfad`
+   (`HASHES` in `native-trial.cjs`). A mismatch means the bundle moved: stop and
+   re-pin rather than building against it.
 
 ### Numbered verification sequence
 
