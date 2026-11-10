@@ -147,6 +147,7 @@
           activeArt: "", activeArtId: null,
           outgoingArt: "", outgoingArtId: null,
           artIncomingOpacity: 1,
+          outgoingArtOpacity: 1,
           prefs: {
             hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false, favorites: []
           }
@@ -272,6 +273,7 @@
           this.outgoingArt = "";
           this.outgoingArtId = null;
           this.artIncomingOpacity = 1;
+          this.outgoingArtOpacity = 1;
           this.autoSwitchAt = 0;
           this.autoSwitchId = null;
           this.autoSwitchName = "";
@@ -408,6 +410,7 @@
             this.outgoingArt = "";
             this.outgoingArtId = null;
             this.artIncomingOpacity = 1;
+            this.outgoingArtOpacity = 1;
             return;
           }
           var items = this.dockItems();
@@ -421,15 +424,20 @@
           if (this.activeArt && this.activeArt !== targetArt) {
             this.outgoingArt = this.activeArt;
             this.outgoingArtId = this.activeArtId;
+            this.outgoingArtOpacity = 1;
             this.activeArt = targetArt;
             this.activeArtId = targetId;
             this.artIncomingOpacity = targetArt ? 0 : 1;
             if (this._artTickTimer) clearTimeout(this._artTickTimer);
             if (this._artTimer) clearTimeout(this._artTimer);
             var vm = this;
-            if (targetArt && typeof setTimeout === "function") {
+            if (typeof setTimeout === "function") {
+              // With art on both sides the tick starts the incoming fade; with
+              // an empty target it instead fades the outgoing layer out, so
+              // the wallpaper arrives as a cross-fade instead of a cut.
               this._artTickTimer = setTimeout(function () {
-                vm.artIncomingOpacity = 1;
+                if (targetArt) vm.artIncomingOpacity = 1;
+                else vm.outgoingArtOpacity = 0;
                 vm._artTickTimer = null;
               }, 16);
             }
@@ -437,6 +445,7 @@
               this._artTimer = setTimeout(function () {
                 vm.outgoingArt = "";
                 vm.outgoingArtId = null;
+                vm.outgoingArtOpacity = 1;
                 vm._artTimer = null;
               }, 300);
             }
@@ -794,7 +803,7 @@
                 pointerEvents: "none",
                 backgroundImage: "url(" + JSON.stringify(this.outgoingArt) + ")",
                 backgroundSize: "cover", backgroundPosition: "center",
-                opacity: 1,
+                opacity: this.outgoingArtOpacity,
                 transition: "opacity 300ms ease-out"
               }
             }));

@@ -935,6 +935,37 @@ test('input art: cross-fades two stacked art layers during transitions and rejec
   v.stop();
 });
 
+test('input art: fades the outgoing layer out when the next input has none configured', () => {
+  const f = setup(), v = f.instance;
+  f.root.AlvidaaNativeInputArt = { 0: 'data:image/png;base64,TVART' };
+  v.start();
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  assert.equal(v.dock, 0);
+  // HDMI2 has no configured art, so the target layer is empty.
+  v.dock = 1;
+  v.syncArt();
+  let flat = flatten(draw());
+  let outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  let incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  assert.ok(outgoing, 'outgoing art stays mounted during the fade');
+  assert.equal(outgoing.data.style.opacity, 1, 'outgoing starts the fade at opacity 1');
+  assert.equal(incoming, undefined, 'no incoming layer when the target has no art');
+  const tick = f.timeouts.get(v._artTickTimer);
+  assert.ok(tick, 'fade tick scheduled');
+  tick();
+  flat = flatten(draw());
+  outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  assert.equal(outgoing.data.style.opacity, 0,
+    'outgoing fades 1 -> 0 so the wallpaper arrives as a cross-fade, not a cut');
+  const fade = f.timeouts.get(v._artTimer);
+  assert.ok(fade, '300ms cleanup timer still scheduled');
+  fade();
+  flat = flatten(draw());
+  outgoing = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'outgoing');
+  assert.equal(outgoing, undefined, 'outgoing unmounts after 300ms');
+  v.stop();
+});
+
 test('build script embeds AlvidaaNativeInputArt when present and works unchanged when absent', () => {
   const { build } = require('./build-native-alvidaa.cjs');
   const os = require('node:os');
