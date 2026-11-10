@@ -635,6 +635,29 @@ test('favorites: resolves favorites in order, drops stale IDs silently, and caps
   v.stop();
 });
 
+test('favorites: tiles render the real icon through the allowlist and fall back to the star', () => {
+  const f = setup({
+    storage: {
+      alvidaa_favorites: ['1', '2']
+    }
+  }), v = f.instance;
+  v.start();
+  const items = v.appItems();
+  assert.equal(items[0].icon, 'file:///hisenseUI/var/local/storeAppIcon/netflix.png',
+    'a local icon passes the allowlist onto the favorite tile');
+  assert.equal(items[1].icon, '',
+    'a remote-only icon is refused, so the star glyph is the fallback');
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const flat = flatten(draw());
+  const imgs = flat.filter(n => n.tag === 'img');
+  assert.equal(imgs.length, 1, 'only the allowlisted favorite renders an <img>');
+  assert.equal(imgs[0].data.attrs.src, 'file:///hisenseUI/var/local/storeAppIcon/netflix.png');
+  assert.equal(imgs[0].data.style.objectFit, 'contain');
+  assert.ok(flat.some(n => (n.children || []).includes('\u2605')),
+    'the refused favorite still renders the star glyph');
+  v.stop();
+});
+
 test('favorites: activating favorite directly launches app without opening overlay; Apps and Settings unchanged', () => {
   const f = setup({
     storage: {

@@ -363,7 +363,10 @@
                   appId: app.appId,
                   app: app,
                   label: app.appName,
-                  glyph: app.glyph || "\u2605",
+                  // The real icon through the same allowlist as the overlay;
+                  // the star is only what renders when appIcon() refuses.
+                  icon: this.appIcon(app),
+                  glyph: "\u2605",
                   sub: "Favorite"
                 });
                 count++;
@@ -732,16 +735,24 @@
         this.appItems().forEach(function (item, index) {
           var focused = vm.zone === "apps" && vm.app === index;
           var tileX = 112 + index * (DOCK_SIZE + DOCK_GAP);
-          var children = [
-            h("div", { style: box(0, 42, DOCK_SIZE, 60, {
+          var children = [];
+          if (item.icon) {
+            // Favorites carry their app's real icon; same 80px box the dock
+            // and overlay use, contained so odd aspect ratios stay inside it.
+            children.push(h("img", {
+              attrs: { src: item.icon, alt: item.label || "" },
+              style: box((DOCK_SIZE - ICON) / 2, 24, ICON, ICON, { objectFit: "contain" })
+            }));
+          } else {
+            children.push(h("div", { style: box(0, 42, DOCK_SIZE, 60, {
               fontSize: 52, lineHeight: 60, textAlign: "center",
               color: focused ? "#ffffff" : "#cbd5e1"
-            }) }, [item.glyph]),
-            h("div", { style: box(0, 108, DOCK_SIZE, 40, {
-              fontSize: 26, lineHeight: 40, textAlign: "center",
-              color: focused ? "#ffffff" : "#94a3b8"
-            }) }, [item.label])
-          ];
+            }) }, [item.glyph]));
+          }
+          children.push(h("div", { style: box(0, 108, DOCK_SIZE, 40, {
+            fontSize: 26, lineHeight: 40, textAlign: "center",
+            color: focused ? "#ffffff" : "#94a3b8"
+          }) }, [item.label]));
           if (item.sub) {
             children.push(h("div", { style: box(0, 144, DOCK_SIZE, 26, {
               fontSize: 18, lineHeight: 26, textAlign: "center", color: "#64748b"
