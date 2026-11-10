@@ -603,15 +603,18 @@ test('preferences: re-read on activated refreshes apps and smart focus', () => {
   v.stop();
 });
 
-test('favorites: empty favorites preserves stock [Apps, Settings] behavior', () => {
+test('favorites: empty favorites keeps the [Apps, Settings, Launcher] doors', () => {
   const f = setup(), v = f.instance;
   v.start();
   const items = v.appItems();
-  assert.equal(items.length, 2);
+  assert.equal(items.length, 3);
   assert.equal(items[0].kind, 'apps');
   assert.equal(items[0].label, 'Apps');
   assert.equal(items[1].kind, 'settings');
   assert.equal(items[1].label, 'Settings');
+  assert.equal(items[2].kind, 'launcher');
+  assert.equal(items[2].label, 'Launcher');
+  assert.equal(items[2].sub, 'Home settings');
   v.stop();
 });
 
@@ -623,7 +626,7 @@ test('favorites: resolves favorites in order, drops stale IDs silently, and caps
   }), v = f.instance;
   v.start();
   const items = v.appItems();
-  assert.equal(items.length, 4);
+  assert.equal(items.length, 5);
   assert.equal(items[0].kind, 'favorite');
   assert.equal(items[0].appId, '2');
   assert.equal(items[0].label, 'Plex');
@@ -632,6 +635,7 @@ test('favorites: resolves favorites in order, drops stale IDs silently, and caps
   assert.equal(items[1].label, 'Netflix');
   assert.equal(items[2].kind, 'apps');
   assert.equal(items[3].kind, 'settings');
+  assert.equal(items[4].kind, 'launcher');
   v.stop();
 });
 
@@ -693,7 +697,7 @@ test('favorites: clamp tolerates changing favorites list', () => {
     }
   }), v = f.instance;
   v.start();
-  assert.equal(v.appItems().length, 4);
+  assert.equal(v.appItems().length, 5);
   v.zone = 'apps';
   v.app = 3; // Settings (index 3)
   v.clamp();
@@ -702,8 +706,8 @@ test('favorites: clamp tolerates changing favorites list', () => {
   // Clear favorites and re-read
   f.store.set('alvidaa_favorites', []);
   v.readPrefs();
-  assert.equal(v.appItems().length, 2);
-  assert.equal(v.app, 1); // safely clamped from 3 to 1 (Settings)
+  assert.equal(v.appItems().length, 3);
+  assert.equal(v.app, 2); // safely clamped from 3 to 2 (Launcher door)
   v.stop();
 });
 
@@ -986,4 +990,316 @@ test('build script embeds AlvidaaNativeInputArt when present and works unchanged
   assert.ok(candidateWithArt.includes('self.AlvidaaNativeInputArt={"HDMI1":"data:image/png;base64,INLINEART"};'));
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- the launcher settings surface -----------------------------------------
+
+function openSettings(v) {
+  v.zone = 'apps';
+  const items = v.appItems();
+  v.app = items.indexOf(items.find(i => i.kind === 'launcher'));
+  v.activate();
+}
+
+test('settings: the Launcher door opens the layer, Back returns to view 2, glass renders', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  const items = v.appItems();
+  const door = items.find(i => i.kind === 'launcher');
+  assert.ok(door, 'the Launcher door exists in view 2');
+  assert.equal(door.label, 'Launcher');
+  assert.equal(door.glyph, '\u2630');
+  assert.equal(door.sub, 'Home settings');
+  assert.notEqual(door.glyph, items.find(i => i.kind === 'settings').glyph,
+    'the two settings doors must not look alike');
+  openSettings(v);
+  assert.equal(v.settings, true);
+  assert.equal(v.settingsPage, 'root');
+  assert.equal(v.zone, 'apps');
+  const flat = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  assert.ok(flat.find(n => n.data && n.data.style &&
+    n.data.style.backgroundColor === 'rgba(3,5,9,0.86)'), 'modal dark glass renders');
+  const texts = flat.flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('HOME SETTINGS'));
+  assert.ok(texts.includes('Auto-switch on boot'));
+  assert.ok(texts.includes('Input names'));
+  assert.ok(texts.includes('Home settings'), 'the door itself is on the row behind the glass');
+  v.handleKey(k.BACK);
+  assert.equal(v.settings, false);
+  assert.equal(v.zone, 'apps', 'Back closes the layer and stays in view 2');
+  v.handleKey(k.UP); // view 2 -> dock
+  assert.equal(v.handleKey(k.BACK), false, 'Back at the dock still belongs to the vendor');
+  v.stop();
+});
+
+test('settings: auto-switch toggle writes real booleans and the row follows', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  assert.equal(v.settingsRows()[0].kind, 'autoswitch');
+  assert.equal(v.settingsRows()[0].value, 'off');
+  v.handleKey(k.ENTER);
+  assert.equal(f.store.get('alvidaa_auto_switch'), 'true', 'stored as a real JSON boolean');
+  assert.equal(v.prefs.autoSwitch, true);
+  assert.equal(v.settingsRows()[0].value, 'on');
+  v.handleKey(k.ENTER);
+  assert.equal(f.store.get('alvidaa_auto_switch'), 'false');
+  assert.equal(v.settingsRows()[0].value, 'off');
+  v.handleKey(k.RIGHT);
+  assert.equal(f.store.get('alvidaa_auto_switch'), 'true', 'Left/Right changes the value too');
+  v.handleKey(k.LEFT);
+  assert.equal(f.store.get('alvidaa_auto_switch'), 'false');
+  v.stop();
+});
+
+test('settings: hiding an app writes the hidden list and the overlay loses it immediately', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  assert.equal(v.settingsRows()[1].kind, 'open-apps');
+  assert.equal(v.settingsRows()[1].sub, '2 shown, 0 hidden');
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // apps page
+  assert.equal(v.settingsPage, 'apps');
+  assert.equal(v.settingsRows().length, 2);
+  assert.equal(v.settingsRows()[0].label, 'Netflix');
+  assert.equal(v.settingsRows()[0].value, 'shown');
+  v.handleKey(k.ENTER); // hide Netflix
+  assert.equal(f.store.get('alvidaa_hidden_apps'), '["1"]');
+  assert.deepEqual(v.apps.map(a => a.appId), ['2'],
+    'the filtered overlay list updates without a restart');
+  assert.equal(v.settingsRows()[0].value, 'hidden');
+  v.handleKey(k.BACK); // root
+  assert.equal(v.settingsPage, 'root');
+  assert.equal(v.settingsRows()[1].sub, '1 shown, 1 hidden', 'the root sub-label follows');
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // apps page again
+  v.handleKey(k.ENTER); // unhide
+  assert.equal(f.store.get('alvidaa_hidden_apps'), '[]');
+  assert.deepEqual(v.apps.map(a => a.appId), ['1', '2']);
+  v.stop();
+});
+
+test('settings: pin and unpin write favorites, the sixth pin is refused with a toast', () => {
+  const f = setup({ storage: { alvidaa_favorites: ['1', '2', 'f3', 'f4', 'f5'] } }),
+    v = f.instance, k = KEYS;
+  v.start();
+  // Prefilled storage holds a raw array until the component writes it back
+  // as JSON, so parse either shape.
+  const favs = () => {
+    const raw = f.store.get('alvidaa_favorites');
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  };
+  // Two more valid apps so there is an unpinned row to try pinning.
+  v._lastData.apps.push({ appId: '4', appName: 'Alpha' }, { appId: '5', appName: 'Beta' });
+  v.readPrefs();
+  openSettings(v);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // apps page
+  assert.equal(v.settingsRows().length, 4);
+  assert.equal(v.settingsRows()[0].label, '\u2605 Netflix', 'pinned apps carry the star marker');
+  v.settingsIndex = 2; // Alpha
+  v.handleKey(k.RIGHT); // pin
+  assert.match(v.toast, /favorites are full/);
+  assert.equal(favs().length, 5, 'the stored list stays at 5, nothing dropped silently');
+  v.settingsIndex = 0; // Netflix
+  v.handleKey(k.RIGHT); // unpin always works
+  assert.deepEqual(favs(), ['2', 'f3', 'f4', 'f5']);
+  assert.equal(v.settingsRows()[0].label, 'Netflix');
+  v.handleKey(k.RIGHT); // pin again
+  assert.deepEqual(favs(), ['2', 'f3', 'f4', 'f5', '1']);
+  assert.equal(v.appItems()[0].appId, '2',
+    'view 2 reads the same favorites as the settings list');
+  v.stop();
+});
+
+test('settings: the keyboard renames an input and the dock labels follow', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  assert.equal(v.settingsPage, 'inputs');
+  assert.equal(v.settingsRows().length, 3);
+  assert.equal(v.settingsRows()[1].label, 'PlayStation 5');
+  assert.equal(v.settingsRows()[1].value, '');
+  v.settingsIndex = 1;
+  v.handleKey(k.ENTER); // name editor
+  assert.equal(v.settingsPage, 'name');
+  assert.equal(v.nameDraft, '');
+  // Grid is A-Z then 0-9: P=15, S=18, 5=31; DONE=39.
+  v.nameIndex = 15; v.handleKey(k.ENTER);
+  v.nameIndex = 18; v.handleKey(k.ENTER);
+  v.nameIndex = 31; v.handleKey(k.ENTER);
+  assert.equal(v.nameDraft, 'PS5');
+  const draftTree = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  assert.ok(draftTree.some(n => (n.children || []).includes('PS5')),
+    'the editor renders the draft');
+  v.nameIndex = 39; v.handleKey(k.ENTER); // DONE
+  assert.equal(v.settingsPage, 'inputs');
+  assert.equal(f.store.get('alvidaa_custom_names'), '{"HDMI2":"PS5"}');
+  assert.equal(v.settingsRows()[1].value, 'custom');
+  assert.equal(v.settingsRows().length, 4, 'a Reset row appeared under the renamed input');
+  assert.equal(v.sourceName(v.sources[1]), 'PS5');
+  v.zone = 'dock';
+  v.dock = 1;
+  const texts = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })))
+    .flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('PS5'), 'the big label above the dock shows the custom name');
+  v.stop();
+});
+
+test('settings: a draft that trims to empty deletes the custom name', () => {
+  const f = setup({ storage: { alvidaa_custom_names: { HDMI2: 'PlayStation 5 Pro' } } }),
+    v = f.instance, k = KEYS;
+  v.start();
+  assert.equal(v.sourceName(v.sources[1]), 'PlayStation 5 Pro');
+  openSettings(v);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  assert.equal(v.settingsRows()[1].value, 'custom');
+  v.settingsIndex = 1;
+  v.handleKey(k.ENTER); // editor, seeded from the current custom name
+  assert.equal(v.settingsPage, 'name');
+  assert.equal(v.nameDraft, 'PlayStation 5 Pro');
+  v.nameIndex = 38; v.handleKey(k.ENTER); // CLEAR
+  assert.equal(v.nameDraft, '');
+  v.nameIndex = 36; v.handleKey(k.ENTER); // SPACE
+  v.nameIndex = 36; v.handleKey(k.ENTER); // SPACE
+  assert.equal(v.nameDraft, '  ');
+  v.nameIndex = 39; v.handleKey(k.ENTER); // DONE
+  assert.equal(f.store.get('alvidaa_custom_names'), '{}', 'the key is deleted, not stored empty');
+  assert.equal(v.sourceName(v.sources[1]), 'PlayStation 5', 'the vendor name returns');
+  v.stop();
+});
+
+test('settings: the Reset row clears one custom name', () => {
+  const f = setup({ storage: { alvidaa_custom_names: { HDMI2: 'Custom Name' } } }),
+    v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  assert.equal(v.settingsRows().length, 4);
+  assert.equal(v.settingsRows()[2].kind, 'reset-name');
+  assert.equal(v.settingsRows()[2].label, 'Reset name');
+  v.settingsIndex = 2;
+  v.handleKey(k.ENTER);
+  assert.equal(f.store.get('alvidaa_custom_names'), '{}');
+  assert.equal(v.sourceName(v.sources[1]), 'PlayStation 5');
+  assert.equal(v.settingsRows().length, 3, 'the Reset row disappears with the custom name');
+  v.stop();
+});
+
+test('settings: the only-list row appears only when set and OK clears it', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  openSettings(v);
+  assert.equal(v.settingsRows().some(r => r.kind === 'only-list'), false);
+  v.stop();
+
+  const g = setup({ storage: { alvidaa_only_apps: ['1'] } }), w = g.instance, k = KEYS;
+  w.start();
+  openSettings(w);
+  const rows = w.settingsRows();
+  assert.equal(rows.length, 4);
+  assert.equal(rows[3].kind, 'only-list');
+  w.settingsIndex = 3;
+  w.handleKey(k.ENTER);
+  assert.equal(g.store.get('alvidaa_only_apps'), '[]');
+  assert.equal(w.settingsRows().some(r => r.kind === 'only-list'), false);
+  assert.deepEqual(w.apps.map(a => a.appId), ['1', '2'],
+    'clearing the only-list restores the hidden-list behaviour');
+  w.stop();
+});
+
+test('settings: the surface renders and navigates with storage absent and writes nothing', () => {
+  const f = setup({ noStorage: true }), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  assert.equal(v.settings, true);
+  const texts = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })))
+    .flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('HOME SETTINGS'));
+  v.handleKey(k.ENTER); // toggle auto-switch: silent no-op, no throw
+  assert.equal(v.prefs.autoSwitch, false);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // apps page
+  v.handleKey(k.ENTER); // toggle visibility: no throw
+  v.handleKey(k.RIGHT); // pin: no throw
+  v.handleKey(k.BACK);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  v.handleKey(k.ENTER); // name editor
+  v.nameIndex = 0; v.handleKey(k.ENTER); // type "A"
+  assert.equal(v.nameDraft, 'A');
+  v.nameIndex = 39; v.handleKey(k.ENTER); // DONE: no throw
+  v.handleKey(k.BACK); // root
+  v.handleKey(k.BACK); // close
+  assert.equal(v.settings, false);
+  assert.equal(f.calls.filter(c => c[0] === 'storage:set').length, 0);
+  v.stop();
+});
+
+test('settings: number hotkeys do not fire while the settings layer is open', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  v.sources = Array.from({ length: 5 }, (_, i) => ({ sourceId: 'in' + i, name: 'In ' + i }));
+  openSettings(v);
+  const before = f.calls.length;
+  assert.equal(v.handleKey(k.NUM_1), false);
+  assert.equal(v.handleKey(k.NUM_0), false);
+  assert.equal(v.dock, 0);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  assert.equal(v.handleKey(k.NUM_3), false);
+  v.handleKey(k.ENTER); // name editor
+  assert.equal(v.settingsPage, 'name');
+  assert.equal(v.handleKey(k.NUM_7), false);
+  assert.equal(f.calls.length, before, 'no source switch fired behind the layer');
+  v.stop();
+});
+
+test('settings: the name draft is capped at 24 characters', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.DOWN);
+  v.handleKey(k.ENTER); // inputs page
+  v.handleKey(k.ENTER); // editor
+  v.nameDraft = 'x'.repeat(24);
+  v.nameIndex = 0; // 'A'
+  v.handleKey(k.ENTER);
+  assert.equal(v.nameDraft.length, 24, 'no character past the cap');
+  assert.match(v.toast, /24 characters max/);
+  v.nameIndex = 37; // BACKSPACE still works at the cap
+  v.handleKey(k.ENTER);
+  assert.equal(v.nameDraft.length, 23);
+  v.stop();
+});
+
+test('settings: announce speaks the focused row and keyboard cell', () => {
+  const f = setup(), v = f.instance;
+  const spoken = [];
+  f.sdk.tts = { isEnable: () => true, speak: m => spoken.push(m) };
+  v.start();
+  openSettings(v);
+  v.announce();
+  assert.deepEqual(spoken, ['Auto-switch on boot, off']);
+  v.settingsIndex = 2;
+  v.announce();
+  assert.equal(spoken[1], 'Input names');
+  v.handleKey(KEYS.ENTER); // inputs page
+  v.announce();
+  assert.equal(spoken[2], 'TV');
+  v.handleKey(KEYS.ENTER); // name editor
+  v.announce();
+  assert.equal(spoken[3], 'A', 'keyboard cells speak their character');
+  v.stop();
 });

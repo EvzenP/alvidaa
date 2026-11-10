@@ -12,6 +12,8 @@
  *     connected / no-signal line under it
  *   - one Apps tile that opens the app list as an overlay
  *   - a Settings tile that opens the real stock TV Settings
+ *   - a Launcher door beside it that opens this component's own settings
+ *     surface, writing the six preferences back through sdk.storage
  *
  * Two views, panned vertically like the canvas: view 1 is the dock, view 2 is
  * the apps row. No canvas, no iframe, no global CSS.
@@ -26,6 +28,15 @@
   var DOCK_SIZE = 264, DOCK_HEIGHT = 180, DOCK_GAP = 20, DOCK_PAGE = 6;
   var OVERLAY_COLS = 6, OVERLAY_CELL = 176;
   var ICON = 80;
+  // The name editor's on-screen keyboard: A-Z then 0-9 as a six-column grid,
+  // with the four action cells in the last row. Up/Down moves KB_COLS cells.
+  var KB_COLS = 6;
+  var KB_CELLS = (function () {
+    var cells = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    cells.push("SPACE", "BACKSPACE", "CLEAR", "DONE");
+    return cells;
+  })();
+  var NAME_MAX = 24;
   // Brand colours, so a letter badge reads as the app rather than as a random
   // hue. Only used when the build gives us no icon.
   var BRANDS = [
@@ -141,6 +152,8 @@
           apps: [], sources: [],
           zone: "dock", dock: 0, app: 0,
           overlay: false, overlayIndex: 0,
+          settings: false, settingsPage: "root", settingsIndex: 0,
+          nameDraft: "", nameIndex: 0, nameSourceId: null,
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
           autoSwitchId: null, autoSwitchName: "", autoSwitchAt: 0,
@@ -288,6 +301,7 @@
           // key brought us here. Smart focus lands on the port that is live.
           this.zone = "dock";
           this.overlay = false;
+          this.closeSettings();
           this.dock = this.smartIndex();
           this.app = 0;
           this.syncArt();
@@ -382,6 +396,13 @@
           items.push({
             kind: "settings", label: "Settings", glyph: "\u2699", sub: "TV settings"
           });
+          // Our own settings door, kept visually distinct from the stock one:
+          // different glyph, label, sub-label and accent colour, because
+          // mixing up "TV settings" and "Home settings" is a support burden.
+          items.push({
+            kind: "launcher", label: "Launcher", glyph: "\u2630",
+            sub: "Home settings", accent: "#38bdf8"
+          });
           return items;
         },
         dockStart: function () {
@@ -396,6 +417,15 @@
           this.app = appLen > 0 ? Math.max(0, Math.min(this.app, appLen - 1)) : 0;
           var overlayLen = this.apps.length;
           this.overlayIndex = overlayLen > 0 ? Math.max(0, Math.min(this.overlayIndex, overlayLen - 1)) : 0;
+          if (this.settings) {
+            if (this.settingsPage === "name") {
+              this.nameIndex = Math.max(0, Math.min(this.nameIndex, KB_CELLS.length - 1));
+            } else {
+              var rows = this.settingsRows();
+              this.settingsIndex = rows.length ?
+                Math.max(0, Math.min(this.settingsIndex, rows.length - 1)) : 0;
+            }
+          }
         },
         showToast: function (text, ms) {
           if (!text) return;
@@ -507,6 +537,261 @@
           this.overlayIndex = 0;
         },
         closeOverlay: function () { this.overlay = false; },
+        openLauncherSettings: function () {
+          this.settings = true;
+          this.settingsPage = "root";
+          this.settingsIndex = 0;
+          this.nameDraft = "";
+          this.nameIndex = 0;
+          this.nameSourceId = null;
+        },
+        closeSettings: function () {
+          this.settings = false;
+          this.settingsPage = "root";
+          this.settingsIndex = 0;
+          this.nameDraft = "";
+          this.nameIndex = 0;
+          this.nameSourceId = null;
+        },
+        // Every valid reported app, unfiltered by preferences: the settings
+        // list must show hidden apps or there would be no way to unhide them.
+        allApps: function () {
+          var raw = this._lastData && this._lastData.apps;
+          return (raw || []).filter(function (app) {
+            if (!app || app.appId == null || !text(app.appName)) return false;
+            var aid = String(app.appId);
+            return aid !== "vidaa-home" && aid !== "206";
+          });
+        },
+        appVisible: function (app) {
+          var only = this.prefs && this.prefs.onlyApps;
+          var hidden = this.prefs && this.prefs.hiddenApps;
+          if (Array.isArray(only) && only.length) return inAppList(only, app);
+          if (Array.isArray(hidden) && hidden.length) return !inAppList(hidden, app);
+          return true;
+        },
+        // The focused page's rows, rebuilt on every read so the labels follow
+        // the preferences. Rows carry `speak` when the spoken form should be
+        // richer than the label.
+        settingsRows: function () {
+          var vm = this, rows = [];
+          if (this.settingsPage === "name") return rows;
+          if (this.settingsPage === "apps") {
+            var favs = (this.prefs && this.prefs.favorites) || [];
+            this.allApps().forEach(function (app) {
+              var visible = vm.appVisible(app);
+              var pinned = inAppList(favs, app);
+              rows.push({
+                kind: "app", app: app,
+                label: (pinned ? "\u2605 " : "") + app.appName,
+                value: visible ? "shown" : "hidden",
+                speak: app.appName + ", " + (visible ? "shown" : "hidden") +
+                  (pinned ? ", pinned" : "")
+              });
+            });
+            return rows;
+          }
+          if (this.settingsPage === "inputs") {
+            this.sources.forEach(function (input) {
+              if (!input || input.sourceId == null) return;
+              var custom = vm.prefs && vm.prefs.customNames &&
+                text(vm.prefs.customNames[String(input.sourceId)]);
+              rows.push({
+                kind: "input", input: input,
+                label: vm.sourceName(input),
+                value: custom ? "custom" : "",
+                sub: String(input.sourceId),
+                speak: vm.sourceName(input) + (custom ? ", custom name" : "")
+              });
+              // Reset only makes sense where a custom name can be undone.
+              if (custom) {
+                rows.push({
+                  kind: "reset-name", input: input,
+                  label: "Reset name", sub: "clears the custom name",
+                  speak: "Reset name for " + vm.sourceName(input)
+                });
+              }
+            });
+            return rows;
+          }
+          var total = this.allApps().length, customCount = 0;
+          this.sources.forEach(function (input) {
+            if (vm.prefs && vm.prefs.customNames &&
+                text(vm.prefs.customNames[String(input.sourceId)])) customCount++;
+          });
+          rows.push({
+            kind: "autoswitch", label: "Auto-switch on boot",
+            value: this.prefs.autoSwitch ? "on" : "off",
+            speak: "Auto-switch on boot, " + (this.prefs.autoSwitch ? "on" : "off")
+          });
+          rows.push({
+            kind: "open-apps", label: "Apps",
+            sub: this.apps.length + " shown, " + (total - this.apps.length) + " hidden"
+          });
+          rows.push({
+            kind: "open-inputs", label: "Input names",
+            sub: this.sources.length + " inputs" +
+              (customCount ? " \u00b7 " + customCount + " renamed" : "")
+          });
+          var only = this.prefs && this.prefs.onlyApps;
+          if (Array.isArray(only) && only.length) {
+            rows.push({
+              kind: "only-list", label: "Only-list active",
+              sub: "overrides hidden apps \u00b7 OK clears it",
+              speak: "Only-list active, overrides hidden apps"
+            });
+          }
+          return rows;
+        },
+        toggleAutoSwitch: function () {
+          writePref("alvidaa_auto_switch", !this.prefs.autoSwitch);
+          this.readPrefs();
+        },
+        toggleAppVisible: function (app) {
+          if (!app || app.appId == null) return;
+          var only = this.prefs && this.prefs.onlyApps;
+          if (Array.isArray(only) && only.length && !inAppList(only, app)) {
+            // Writing the hidden list would be a silent no-op while the
+            // only-list governs visibility; say so instead of pretending.
+            this.showToast("the only-list overrides visibility");
+            return;
+          }
+          var hidden = Array.isArray(this.prefs.hiddenApps) ? this.prefs.hiddenApps.slice() : [];
+          var id = String(app.appId).toLowerCase();
+          var name = (app.appName || "").trim().toLowerCase();
+          var keep = [];
+          for (var i = 0; i < hidden.length; i++) {
+            var entry = String(hidden[i]).trim().toLowerCase();
+            if (entry === id || (name && entry === name)) continue;
+            keep.push(hidden[i]);
+          }
+          if (this.appVisible(app)) keep.push(String(app.appId));
+          writePref("alvidaa_hidden_apps", keep);
+          this.readPrefs();
+        },
+        togglePin: function (app) {
+          if (!app || app.appId == null) return;
+          var favs = Array.isArray(this.prefs.favorites) ? this.prefs.favorites.slice() : [];
+          var id = String(app.appId);
+          var at = -1;
+          for (var i = 0; i < favs.length; i++) {
+            if (String(favs[i]) === id) { at = i; break; }
+          }
+          if (at >= 0) favs.splice(at, 1);
+          else {
+            // Refuse loudly rather than silently dropping the pin.
+            if (favs.length >= 5) { this.showToast("favorites are full"); return; }
+            favs.push(id);
+          }
+          writePref("alvidaa_favorites", favs);
+          this.readPrefs();
+        },
+        clearOnlyList: function () {
+          writePref("alvidaa_only_apps", []);
+          this.readPrefs();
+        },
+        openNameEditor: function (input) {
+          if (!input || input.sourceId == null) return;
+          this.settingsPage = "name";
+          this.nameSourceId = input.sourceId;
+          var custom = this.prefs && this.prefs.customNames;
+          var seed = custom ? text(custom[String(input.sourceId)]) : "";
+          this.nameDraft = seed || "";
+          this.nameIndex = 0;
+        },
+        closeNameEditor: function () {
+          this.settingsPage = "inputs";
+          this.nameDraft = "";
+          this.nameIndex = 0;
+          this.nameSourceId = null;
+          this.clamp();
+        },
+        commitNameDraft: function () {
+          var sid = this.nameSourceId;
+          if (sid == null) { this.closeNameEditor(); return; }
+          var trimmed = String(this.nameDraft || "").trim();
+          var names = readPref("alvidaa_custom_names", {});
+          if (!names || typeof names !== "object" || Array.isArray(names)) names = {};
+          // A blank draft means "back to the vendor name": delete the key,
+          // never store an empty string.
+          if (trimmed) names[String(sid)] = trimmed;
+          else delete names[String(sid)];
+          writePref("alvidaa_custom_names", names);
+          this.settingsPage = "inputs";
+          this.nameDraft = "";
+          this.nameIndex = 0;
+          this.nameSourceId = null;
+          this.readPrefs();
+        },
+        resetName: function (input) {
+          if (!input || input.sourceId == null) return;
+          var names = readPref("alvidaa_custom_names", {});
+          if (names && typeof names === "object" && !Array.isArray(names)) {
+            delete names[String(input.sourceId)];
+            writePref("alvidaa_custom_names", names);
+          }
+          this.readPrefs();
+        },
+        kbPress: function () {
+          var cell = KB_CELLS[this.nameIndex];
+          if (!cell) return;
+          if (cell === "DONE") { this.commitNameDraft(); return; }
+          if (cell === "BACKSPACE") { this.nameDraft = this.nameDraft.slice(0, -1); return; }
+          if (cell === "CLEAR") { this.nameDraft = ""; return; }
+          if (this.nameDraft.length >= NAME_MAX) {
+            this.showToast(NAME_MAX + " characters max");
+            return;
+          }
+          this.nameDraft += cell === "SPACE" ? " " : cell;
+        },
+        activateSettingsRow: function () {
+          var row = this.settingsRows()[this.settingsIndex];
+          if (!row) return;
+          if (row.kind === "autoswitch") this.toggleAutoSwitch();
+          else if (row.kind === "open-apps") { this.settingsPage = "apps"; this.settingsIndex = 0; this.clamp(); }
+          else if (row.kind === "open-inputs") { this.settingsPage = "inputs"; this.settingsIndex = 0; this.clamp(); }
+          else if (row.kind === "only-list") this.clearOnlyList();
+          else if (row.kind === "app") this.toggleAppVisible(row.app);
+          else if (row.kind === "input") this.openNameEditor(row.input);
+          else if (row.kind === "reset-name") this.resetName(row.input);
+        },
+        nudgeSettingsRow: function () {
+          var row = this.settingsRows()[this.settingsIndex];
+          if (!row) return;
+          // Left/Right change a value: the auto-switch toggle and the pin.
+          if (row.kind === "autoswitch") this.toggleAutoSwitch();
+          else if (row.kind === "app") this.togglePin(row.app);
+        },
+        handleSettingsKey: function (code) {
+          if (this.settingsPage === "name") {
+            if (code === keys.BACK || code === keys.RETURN) { this.closeNameEditor(); return true; }
+            if (code === keys.ENTER) { this.kbPress(); return true; }
+            if (code === keys.LEFT) { this.nameIndex--; this.clamp(); return true; }
+            if (code === keys.RIGHT) { this.nameIndex++; this.clamp(); return true; }
+            if (code === keys.UP) { this.nameIndex -= KB_COLS; this.clamp(); return true; }
+            if (code === keys.DOWN) { this.nameIndex += KB_COLS; this.clamp(); return true; }
+            return false;
+          }
+          if (code === keys.BACK || code === keys.RETURN) {
+            // Sub-pages hand Back to their parent; the root page closes the
+            // layer. Back at the dock still belongs to the vendor.
+            if (this.settingsPage !== "root") {
+              this.settingsPage = "root";
+              this.clamp();
+              return true;
+            }
+            this.closeSettings();
+            return true;
+          }
+          if (code === keys.ENTER) { this.activateSettingsRow(); return true; }
+          if (code === keys.UP) { this.settingsIndex--; this.clamp(); return true; }
+          if (code === keys.DOWN) { this.settingsIndex++; this.clamp(); return true; }
+          if (code === keys.LEFT) { this.nudgeSettingsRow(); return true; }
+          if (code === keys.RIGHT) { this.nudgeSettingsRow(); return true; }
+          // Unhandled keys (digits included) pass through, same contract as
+          // the apps overlay.
+          return false;
+        },
         activate: function () {
           var vm = this;
           if (this.zone === "dock") {
@@ -525,6 +810,8 @@
             this.run(function () { return vm._platform.launchApp(item.appId); });
           } else if (item.kind === "apps") {
             this.openOverlay();
+          } else if (item.kind === "launcher") {
+            this.openLauncherSettings();
           } else {
             this.showToast("Opening " + item.label + "…");
             this.run(function () { return vm._platform.openSettings(); });
@@ -540,7 +827,14 @@
         announce: function () {
           if (!sdk.tts || !sdk.tts.isEnable() || !sdk.router.isCurrentPathEqualTo("/Launcher")) return;
           var label;
-          if (this.overlay) {
+          if (this.settings) {
+            if (this.settingsPage === "name") {
+              label = KB_CELLS[this.nameIndex];
+            } else {
+              var row = this.settingsRows()[this.settingsIndex];
+              label = row && (row.speak || row.label);
+            }
+          } else if (this.overlay) {
             var app = this.apps[this.overlayIndex];
             label = app && app.appName;
           } else if (this.zone === "dock") {
@@ -553,6 +847,13 @@
           if (label) sdk.tts.speak(label);
         },
         handleKey: function (code) {
+          if (this.settings) {
+            var handled = this.handleSettingsKey(code);
+            // A key consumed by the settings layer still proves the user is
+            // present, so the boot countdown must not fire mid-navigation.
+            if (handled && this.autoSwitchAt) this.cancelAutoSwitch();
+            return handled;
+          }
           if (this.overlay) {
             if (code === keys.BACK || code === keys.RETURN) { this.closeOverlay(); return true; }
             if (code === keys.ENTER) { this.launchFocused(); return true; }
@@ -755,7 +1056,7 @@
           } else {
             children.push(h("div", { style: box(0, 42, DOCK_SIZE, 60, {
               fontSize: 52, lineHeight: 60, textAlign: "center",
-              color: focused ? "#ffffff" : "#cbd5e1"
+              color: item.accent || (focused ? "#ffffff" : "#cbd5e1")
             }) }, [item.glyph]));
           }
           children.push(h("div", { style: box(0, 108, DOCK_SIZE, 40, {
@@ -955,6 +1256,120 @@
               borderRadius: 48, backgroundColor: "rgba(14,18,26,0.97)",
               border: "1px solid rgba(255,255,255,0.10)", overflow: "hidden"
             }) }, panel)
+          ]));
+        }
+
+        // ---- the launcher settings layer ----------------------------------
+        if (this.settings) {
+          var spX = 460, spY = 180, spW = 1000, spH = 840;
+          var spPanel = [];
+          var spTitles = { root: "HOME SETTINGS", apps: "APPS",
+            inputs: "INPUT NAMES", name: "RENAME INPUT" };
+          var spHints = {
+            root: "OK select \u00b7 < > change \u00b7 BACK close",
+            apps: "OK show/hide \u00b7 < > pin \u00b7 BACK back",
+            inputs: "OK rename \u00b7 BACK back",
+            name: "OK key \u00b7 BACK cancel"
+          };
+          // Panel children are positioned relative to the panel box, like the
+          // dock tiles are.
+          spPanel.push(label(56, 40, 22, spTitles[this.settingsPage] || "HOME SETTINGS", "#64748b", 600));
+          spPanel.push(h("div", { style: box(56, 40, spW - 112, 24, {
+            fontSize: 18, lineHeight: 24, textAlign: "right", color: "#475569"
+          }) }, [spHints[this.settingsPage] || ""]));
+          if (this.settingsPage === "name") {
+            // Draft line with a caret and a character budget.
+            spPanel.push(h("div", { style: box(56, 96, spW - 112, 88, {
+              borderRadius: 20, backgroundColor: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.14)"
+            }) }, [
+              h("div", { style: box(24, 0, spW - 112 - 130, 88, {
+                fontSize: 34, lineHeight: 88, color: "#f8fafc",
+                whiteSpace: "nowrap", overflow: "hidden"
+              }) }, [this.nameDraft,
+                h("span", { style: { color: "#38bdf8" } }, ["\u258c"])]),
+              h("div", { style: box(spW - 112 - 104, 0, 80, 88, {
+                fontSize: 20, lineHeight: 88, textAlign: "right", color: "#475569"
+              }) }, [this.nameDraft.length + "/" + NAME_MAX])
+            ]));
+            var kbCellW = (spW - 112) / KB_COLS, kbCellH = 76, kbGridY = 216;
+            for (var kb = 0; kb < KB_CELLS.length; kb++) {
+              var kbFocused = this.nameIndex === kb;
+              var kbAction = kb >= KB_CELLS.length - 4;
+              spPanel.push(h("div", {
+                attrs: { role: "button", "aria-label": KB_CELLS[kb], tabindex: kbFocused ? "0" : "-1" },
+                style: box(56 + (kb % KB_COLS) * kbCellW,
+                  kbGridY + Math.floor(kb / KB_COLS) * (kbCellH + 8),
+                  kbCellW - 8, kbCellH, {
+                  borderRadius: 14,
+                  backgroundColor: kbFocused ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
+                  border: kbFocused ? "2px solid #ffffff" : "2px solid rgba(255,255,255,0)",
+                  fontSize: kbAction ? 16 : 26, lineHeight: kbCellH,
+                  textAlign: "center", fontWeight: "600",
+                  color: kbFocused ? "#f8fafc" : "#94a3b8",
+                  overflow: "hidden"
+                })
+              }, [KB_CELLS[kb]]));
+            }
+          } else {
+            var spRows = this.settingsRows();
+            var spListY = 96, spRowH = 84;
+            var spVisible = Math.max(1, Math.floor((spH - spListY - 56) / spRowH));
+            var spFirst = Math.max(0, Math.min(this.settingsIndex - spVisible + 1,
+              Math.max(0, spRows.length - spVisible)));
+            if (!spRows.length) {
+              spPanel.push(label(56, spListY + 8, 24,
+                this.settingsPage === "inputs" ? "no inputs reported" : "no apps reported",
+                "#475569", 500));
+            }
+            for (var ri = spFirst; ri < spRows.length && ri < spFirst + spVisible; ri++) {
+              var spRow = spRows[ri];
+              var spFocused = this.settingsIndex === ri;
+              var spRowY = spListY + (ri - spFirst) * spRowH;
+              var spInner = [];
+              var spMainH = spRow.sub ? 34 : spRowH - 12;
+              spInner.push(h("div", { style: box(24, spRow.sub ? 10 : 0, spW - 96 - 240, spMainH, {
+                fontSize: 24, lineHeight: spMainH, fontWeight: "600",
+                color: spFocused ? "#f8fafc" : "#cbd5e1",
+                whiteSpace: "nowrap", overflow: "hidden"
+              }) }, [spRow.label]));
+              if (spRow.sub) {
+                spInner.push(h("div", { style: box(24, 46, spW - 96 - 240, 24, {
+                  fontSize: 17, lineHeight: 24, color: "#64748b"
+                }) }, [spRow.sub]));
+              }
+              if (spRow.value) {
+                spInner.push(h("div", { style: box(spW - 96 - 200, 0, 176, spRowH - 12, {
+                  fontSize: 22, lineHeight: spRowH - 12, textAlign: "right",
+                  fontWeight: "600",
+                  color: spRow.value === "on" || spRow.value === "shown" || spRow.value === "custom" ?
+                    "#34d399" : "#64748b"
+                }) }, [spRow.value]));
+              }
+              spPanel.push(h("div", {
+                attrs: { role: "button", "aria-label": spRow.speak || spRow.label, tabindex: spFocused ? "0" : "-1" },
+                style: box(48, spRowY, spW - 96, spRowH - 12, {
+                  borderRadius: 18,
+                  backgroundColor: spFocused ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
+                  border: spFocused ? "2px solid #ffffff" : "2px solid rgba(255,255,255,0)",
+                  overflow: "hidden"
+                })
+              }, spInner));
+            }
+            var spOnly = this.prefs && this.prefs.onlyApps;
+            if (this.settingsPage === "apps" && Array.isArray(spOnly) && spOnly.length) {
+              spPanel.push(label(56, spH - 52, 17,
+                "the only-list overrides hidden apps", "#94a3b8", 500));
+            }
+          }
+          layers.push(h("div", { style: {
+            position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+            backgroundColor: "rgba(3,5,9,0.86)"
+          } }, [
+            h("div", { style: box(spX, spY, spW, spH, {
+              borderRadius: 48, backgroundColor: "rgba(14,18,26,0.97)",
+              border: "1px solid rgba(255,255,255,0.10)", overflow: "hidden"
+            }) }, spPanel)
           ]));
         }
 
