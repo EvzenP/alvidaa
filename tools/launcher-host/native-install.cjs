@@ -4,6 +4,7 @@
  *
  *   node native-install.cjs list
  *   node native-install.cjs install <variant> --model <id> --host <ip> [--force] [--no-watcher]
+ *       [--no-input-art] [--input-art <file.json>]
  *   node native-install.cjs rollback --model <id> --host <ip> [--no-watcher]
  *   node native-install.cjs status   --model <id> --host <ip>
  *
@@ -25,6 +26,10 @@
  *     never replaced. A native Home and the watcher are exclusive; --no-watcher
  *     skips this, loudly, for an operator who runs the canvas launcher.
  *   - every build states the stock sha256 it targets.
+ *   - per-input art is decoration: no config, no inputs section, an unreadable
+ *     config or zero usable entries all build without art, and only values the
+ *     component's own allowlist accepts are baked (a remote URL is dropped with
+ *     a warning naming the input).
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -301,10 +306,184 @@ function watcherStep(opts, m, mode, what) {
   }
 }
 
+// --- per-input art (issue #34) ----------------------------------------------
+//
+// The candidate's art is baked at build time so the launcher stays offline and
+// stays one file. The TV reports the *name* of the device on a port but never
+// per-source art, so the only sources are the bridge config's inputs
+// (bridge/config.go: bg = backdrop wallpaper, logo = tile image) or a map
+// handed in with --input-art. The native component's single art slot is the
+// backdrop, so a config entry's bg fills it; logo is tile art and gets no slot
+// here — stretching tile art over the whole screen would be guessing, and the
+// canvas page already renders logos properly. A logo-only entry therefore
+// bakes nothing and is counted, not silently swallowed.
+const INPUT_ART_ALLOWED =
+  /^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i;
+
+// Pure: one art candidate -> the value to bake, or '' when it must be refused.
+// The same rule the component's allowedInputArt() enforces: local files
+// (storeAppIcon, file://, absolute paths) and inline data URIs only. A remote
+// URL would break the offline guarantee.
+function cleanInputArt(value) {
+  return typeof value === 'string' && INPUT_ART_ALLOWED.test(value.trim()) ?
+    value.trim() : '';
+}
+
+// Pure: a config `inputs` object -> { map, warnings, logoOnly, baked }.
+// Keys are lowercased here, matching what the bridge (state.go) and the
+// component both match against.
+function inputArtFromInputs(inputs) {
+  const map = {};
+  const warnings = [];
+  let logoOnly = 0, baked = 0;
+  for (const [key, entry] of Object.entries(inputs)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const name = String(key).trim().toLowerCase();
+    const bg = typeof entry.bg === 'string' ? entry.bg.trim() : '';
+    const logo = typeof entry.logo === 'string' ? entry.logo.trim() : '';
+    if (!name || (!bg && !logo)) continue;
+    if (!bg) { logoOnly++; continue; }
+    if (!cleanInputArt(bg)) {
+      warnings.push(name);
+      continue;
+    }
+    map[name] = bg;
+    baked++;
+  }
+  return { map, warnings, logoOnly, baked };
+}
+
+// Pure: bridge config text -> { map, note, warnings }. Never throws: art is
+// decoration, and no config / no inputs / unreadable / zero entries all mean
+// "build without art" — the note says which of those happened, in one line.
+function inputArtFromConfigText(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    return { map: null, note: 'no bridge config on the TV; building without input art' };
+  }
+  let config;
+  try { config = JSON.parse(text); }
+  catch (error) {
+    return { map: null, note: 'config is not valid JSON (' + error.message + '); building without input art' };
+  }
+  const inputs = config && typeof config === 'object' && !Array.isArray(config) ?
+    config.inputs : null;
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
+    return { map: null, note: 'config has no inputs section; building without input art' };
+  }
+  const art = inputArtFromInputs(inputs);
+  if (art.baked === 0) {
+    return {
+      map: null,
+      note: 'config inputs carry no usable backdrop art' +
+        (art.logoOnly ? ' (' + art.logoOnly + ' logo-only: tile art, not baked)' : '') +
+        '; building without input art',
+      warnings: art.warnings
+    };
+  }
+  return {
+    map: art.map,
+    note: 'input art: baked backdrop art for ' + art.baked + ' input(s): ' +
+      Object.keys(art.map).join(', ') +
+      (art.logoOnly ? '; ' + art.logoOnly + ' logo-only skipped (tile art)' : ''),
+    warnings: art.warnings
+  };
+}
+
+// Pure: the text of an --input-art file -> { map, note, warnings }. Accepts a
+// plain { key: art } map, or a saved bridge config whose `inputs` section
+// carries the bg/logo roles. Remote URLs are dropped with a named warning,
+// exactly like the TV path.
+function inputArtFromFileText(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (error) {
+    return { map: null, note: 'the input-art file is not valid JSON (' + error.message + '); building without input art' };
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      parsed.inputs && typeof parsed.inputs === 'object' && !Array.isArray(parsed.inputs)) {
+    return inputArtFromConfigText(text);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { map: null, note: 'the input-art file is not a JSON object; building without input art' };
+  }
+  // A plain map's values ARE the backdrop art; only the allowlist applies.
+  const map = {};
+  const warnings = [];
+  for (const [key, value] of Object.entries(parsed)) {
+    const name = String(key).trim().toLowerCase();
+    if (!name || typeof value !== 'string' || !value.trim()) continue;
+    const art = cleanInputArt(value);
+    if (!art) { warnings.push(name); continue; }
+    map[name] = art;
+  }
+  if (Object.keys(map).length === 0) {
+    return {
+      map: null,
+      note: 'the input-art file carries no usable art' +
+        (warnings.length ? ' (' + warnings.length + ' remote URL(s) dropped)' : '') +
+        '; building without input art',
+      warnings
+    };
+  }
+  return {
+    map,
+    note: 'input art: baked backdrop art for ' + Object.keys(map).length + ' input(s): ' +
+      Object.keys(map).join(', '),
+    warnings
+  };
+}
+
+// Where the art comes from: --no-input-art skips it, --input-art <file.json>
+// reads a local map (for when the TV is unreachable), else the TV's bridge
+// config over SSH. In dry-run nothing is read from the TV; a local file is
+// read so the line can say exactly what would be baked. Never fails.
+function readInputArt(opts) {
+  if (opts.noInputArt) {
+    return { map: null, note: '--no-input-art: building without input art' };
+  }
+  if (opts.inputArtFile) {
+    let text;
+    try { text = fs.readFileSync(opts.inputArtFile, 'utf8'); }
+    catch (error) {
+      return { map: null, note: '--input-art file unreadable (' + error.message + '); building without input art' };
+    }
+    const art = inputArtFromFileText(text);
+    if (opts.dryRun && art.map) {
+      art.note = '[dry-run] would bake ' + art.note.replace(/^input art: /, '');
+    } else if (opts.dryRun) {
+      art.note = '[dry-run] ' + art.note;
+    }
+    return art;
+  }
+  if (opts.dryRun) {
+    return {
+      map: null,
+      note: '[dry-run] input art: would read ' + CONFIG + ' from the TV and bake the inputs\' backdrop art' +
+        ' (--input-art <file.json> previews a local map instead)'
+    };
+  }
+  try {
+    return inputArtFromConfigText(String(sshFn(opts)(opts,
+      'export PATH=/bin:/usr/bin:/sbin:/usr/bin; cat ' + CONFIG)));
+  } catch (error) {
+    return { map: null, note: 'could not read the TV config (' +
+      String(error.message).split('\n')[0] + '); building without input art' };
+  }
+}
+
 function install(id, opts) {
   const v = variant(id);
   const m = model(opts.model);
   checkPair(v, m, opts.force);
+
+  // Art is decoration: read it first, say what happened in one line, and
+  // never let it fail the build.
+  const art = readInputArt(opts);
+  if (art.note) console.log(art.note);
+  for (const name of art.warnings || []) {
+    console.warn('WARNING: input art for "' + name + '" is a remote URL — dropped; ' +
+      'the launcher must stay offline (use a local file or an inline data URI)');
+  }
 
   // opts.builder stands in for the variant's real build module in the tests
   // only; a real run requires it, and a real build verifies the pinned stock
@@ -314,7 +493,8 @@ function install(id, opts) {
   assert.ok(fs.existsSync(localStock),
     'no pinned stock bundle at ' + m.local_stock + '; run bootstrap first');
   const out = path.join(REPO, 'firmware', opts.model, 'candidate-' + v.id + '.js');
-  const candidate = builder.build(localStock, out, m.stock_sha256);
+  const candidate = builder.build(localStock, out, m.stock_sha256,
+    art.map && Object.keys(art.map).length ? { inputArt: art.map } : undefined);
   console.log('built ' + v.name + ': ' + Buffer.byteLength(candidate) + ' bytes, sha256 ' + hash(candidate));
 
   if (!opts.dryRun) {
@@ -382,7 +562,8 @@ function parse(argv) {
   const args = argv.slice(2);
   const command = args.shift();
   const positional = [];
-  const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false, noWatcher: false };
+  const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
+    noWatcher: false, noInputArt: false, inputArtFile: null };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--model') opts.model = args[++i];
@@ -391,6 +572,8 @@ function parse(argv) {
     else if (arg === '--port') opts.port = Number(args[++i]);
     else if (arg === '--force') opts.force = true;
     else if (arg === '--no-watcher') opts.noWatcher = true;
+    else if (arg === '--no-input-art') opts.noInputArt = true;
+    else if (arg === '--input-art') opts.inputArtFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
     else positional.push(arg);
   }
@@ -426,4 +609,5 @@ if (require.main === module) {
 }
 
 module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap,
-  applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY };
+  applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
+  cleanInputArt, inputArtFromInputs, inputArtFromConfigText, inputArtFromFileText, readInputArt, INPUT_ART_ALLOWED };

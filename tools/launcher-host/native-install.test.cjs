@@ -7,7 +7,8 @@ const vm = require('node:vm');
 const { hash, CONFIG } = require('./native-trial.cjs');
 const { VARIANTS, MODELS, variant, model, verified, checkPair, parse,
   install, rollback, status, syncWatcher,
-  applyWatcherConfig, watcherState, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY } = require('./native-install.cjs');
+  applyWatcherConfig, watcherState, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
+  cleanInputArt, inputArtFromConfigText, inputArtFromFileText } = require('./native-install.cjs');
 
 const HERE = __dirname;
 const REPO = path.resolve(HERE, '../..');
@@ -395,7 +396,7 @@ test('rollback with --no-watcher leaves the config alone and says so', t => {
 // The stock bundle is vendor code and never enters the repo, so the wiring
 // test stubs the build and cleans up after itself; the real builders verify
 // the pinned sha256 and are covered by their own tests.
-function stubBuildForWiring(t) {
+function stubBuildForWiring(t, onBuild) {
   const stock = path.join(REPO, M.local_stock);
   const candidateOut = path.join(REPO, 'firmware', '50a51huv', 'candidate-alvidaa.js');
   const hadStock = fs.existsSync(stock);
@@ -414,7 +415,10 @@ function stubBuildForWiring(t) {
       try { fs.rmdirSync(path.dirname(candidateOut)); } catch (_) { /* not empty or gone */ }
     }
   });
-  return { build: (stockFile, out) => { fs.writeFileSync(out, '/* wiring-test candidate */\n'); return '/* wiring-test candidate */\n'; } };
+  return { build: (stockFile, out, expect, options) => {
+    if (onBuild) onBuild(stockFile, out, expect, options);
+    fs.writeFileSync(out, '/* wiring-test candidate */\n'); return '/* wiring-test candidate */\n';
+  } };
 }
 
 test('install ends with the watcher disabled and the pre-native config preserved', t => {
@@ -454,4 +458,201 @@ test('--no-watcher parses as an opt-in skip, off by default', () => {
   const parsed = parse(['node', 'x', 'rollback', '--model', '50a51huv', '--host', '192.0.2.10', '--no-watcher']);
   assert.equal(parsed.opts.noWatcher, true);
   assert.equal(parse(['node', 'x', 'status']).opts.noWatcher, false);
+});
+
+// --- per-input art (issue #34) ----------------------------------------------
+//
+// The bridge config's inputs carry bg (backdrop) and logo (tile image); the
+// native component's single art slot is the backdrop, so bg fills it and a
+// logo-only entry bakes nothing rather than stretching tile art over the
+// screen. The TV reports names but never art — the config is the only source.
+
+const ART_CFG = JSON.stringify({
+  watcher: { enabled: true },
+  inputs: {
+    'HDMI2': { name: 'HDMI2', bg: '/var/local/alvidaa/launcher/ps5-bg.png',
+               logo: '/var/local/alvidaa/launcher/ps5-logo.png' },
+    'TV': { name: 'TV', logo: '/var/local/alvidaa/launcher/tv-logo.png' },
+    'HDMI3': { name: 'HDMI3', bg: 'https://cdn.example/hdmi3-bg.png' }
+  }
+});
+
+test('input art: the allowlist matches the component exactly, remote is refused', () => {
+  assert.equal(cleanInputArt('var/local/storeAppIcon/x.png'), 'var/local/storeAppIcon/x.png');
+  assert.equal(cleanInputArt('file:///x.png'), 'file:///x.png');
+  assert.equal(cleanInputArt('/next/assets/x.png'), '/next/assets/x.png');
+  assert.equal(cleanInputArt('data:image/png;base64,AAA'), 'data:image/png;base64,AAA');
+  assert.equal(cleanInputArt('data:image/gif;base64,AAA'), '', 'gif is not in the component allowlist');
+  assert.equal(cleanInputArt('http://x/y.png'), '');
+  assert.equal(cleanInputArt('https://x/y.png'), '');
+});
+
+test('input art: builds the map from config inputs, logo-only skipped, remote dropped', () => {
+  const art = inputArtFromConfigText(ART_CFG);
+  assert.deepEqual(art.map, { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' },
+    'bg fills the backdrop slot, lowercased key');
+  assert.deepEqual(art.warnings, ['hdmi3'], 'the dropped input is named for the warning');
+  assert.match(art.note, /logo-only/);
+  assert.equal(art.map.tv, undefined, 'a logo-only entry never becomes a guessed backdrop');
+});
+
+test('input art: no config, no inputs, bad JSON and zero entries all build without art', () => {
+  for (const [text, pattern] of [
+    ['', /no bridge config/],
+    ['{ oops', /not valid JSON/],
+    ['{"watcher":{"enabled":true}}', /no inputs section/],
+    ['{"inputs":{}}', /no usable backdrop art/],
+    ['{"inputs":{"HDMI2":{"logo":"/x/logo.png"}}}', /logo-only/]
+  ]) {
+    const art = inputArtFromConfigText(text);
+    assert.equal(art.map, null, JSON.stringify(text));
+    assert.match(art.note, pattern, JSON.stringify(text));
+    assert.ok(art.note.split('\n').length === 1, 'the note is one line');
+  }
+});
+
+test('input art: install passes the map to the builder', t => {
+  const tv = watcherFixture(t, ART_CFG);
+  let seen = 'not called';
+  const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
+  install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder });
+  assert.deepEqual(seen, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+});
+
+test('input art: missing or unusable config never fails the install', t => {
+  const cases = [
+    // The two corrupt-config cases also pass --no-watcher: on a TV whose
+    // config is missing or not JSON, the watcher step rightly refuses on its
+    // own terms, and this test isolates the art path's behaviour.
+    ['no config file', tv => tv.files.delete(CONFIG), /could not read the TV config/, { noWatcher: true }],
+    ['bad JSON', tv => tv.files.set(CONFIG, Buffer.from('{ oops')), /not valid JSON/, { noWatcher: true }],
+    // The two well-formed cases carry a watcher object so the watcher step
+    // succeeds normally and only the art outcome varies.
+    ['no inputs section', tv => tv.files.set(CONFIG, Buffer.from('{"watcher":{"enabled":true}}')),
+      /no inputs section/, {}],
+    ['zero entries', tv => tv.files.set(CONFIG, Buffer.from('{"watcher":{"enabled":true},"inputs":{}}')),
+      /no usable backdrop art/, {}]
+  ];
+  for (const [what, mutate, pattern, extra] of cases) {
+    const tv = watcherFixture(t);
+    mutate(tv);
+    let seen = 'not called';
+    const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
+    const logs = [];
+    const original = console.log;
+    console.log = message => logs.push(String(message));
+    try {
+      install('alvidaa', Object.assign({ ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder }, extra));
+    } finally { console.log = original; }
+    assert.equal(seen, undefined, what + ': the builder got no art options');
+    assert.ok(logs.some(l => pattern.test(l)), what + ': ' + logs.join(' | '));
+    assert.ok(logs.some(l => l.includes('building without input art')), what);
+    assert.ok(tv.files.has(STATE + '/candidate-native-home.js'), what + ': install still ran');
+  }
+});
+
+test('input art: a remote URL in the TV config is dropped with a warning naming the input', t => {
+  const tv = watcherFixture(t, ART_CFG);
+  const builder = stubBuildForWiring(t);
+  const warnings = [];
+  const original = console.warn;
+  console.warn = message => warnings.push(String(message));
+  try {
+    install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder });
+  } finally { console.warn = original; }
+  assert.ok(warnings.some(w => w.includes('hdmi3') && /remote URL/.test(w)), warnings.join('\n'));
+});
+
+test('input art: --no-input-art skips the TV read, --input-art takes a local map', t => {
+  // --no-input-art: even with art on the TV, nothing is read and nothing baked
+  const tvOff = watcherFixture(t, ART_CFG);
+  let seenOff = 'not called';
+  const builderOff = stubBuildForWiring(t, (a, b, c, options) => { seenOff = options; });
+  install('alvidaa', { ssh: tvOff.ssh, sleep: () => {}, model: '50a51huv',
+    builder: builderOff, noInputArt: true });
+  assert.equal(seenOff, undefined);
+
+  // --input-art <file>: a plain { key: art } map, remote entries dropped
+  const dir = fs.mkdtempSync('/tmp/alvidaa-input-art-');
+  const mapFile = path.join(dir, 'art.json');
+  fs.writeFileSync(mapFile, JSON.stringify({
+    'HDMI2 ': '/var/local/alvidaa/launcher/ps5-bg.png',
+    'bad': 'https://cdn.example/bg.png'
+  }));
+  const tvMap = watcherFixture(t); // the TV config is irrelevant here
+  let seenMap = 'not called';
+  const builderMap = stubBuildForWiring(t, (a, b, c, options) => { seenMap = options; });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = message => warnings.push(String(message));
+  try {
+    install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
+      builder: builderMap, inputArtFile: mapFile });
+  } finally { console.warn = originalWarn; }
+  assert.deepEqual(seenMap, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+  assert.ok(warnings.some(w => w.includes('bad') && /remote URL/.test(w)), warnings.join('\n'));
+
+  // --input-art with a saved bridge config takes the bg/logo path too
+  const cfgFile = path.join(dir, 'config.json');
+  fs.writeFileSync(cfgFile, ART_CFG);
+  let seenCfg = 'not called';
+  const builderCfg = stubBuildForWiring(t, (a, b, c, options) => { seenCfg = options; });
+  install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
+    builder: builderCfg, inputArtFile: cfgFile });
+  assert.deepEqual(seenCfg, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+
+  // an unreadable file still builds, without art
+  let seenMissing = 'not called';
+  const builderMissing = stubBuildForWiring(t, (a, b, c, options) => { seenMissing = options; });
+  install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
+    builder: builderMissing, inputArtFile: path.join(dir, 'nope.json') });
+  assert.equal(seenMissing, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('input art: --dry-run says what would be baked', t => {
+  const logs = [];
+  const original = console.log;
+  console.log = message => logs.push(String(message));
+  try {
+    // Without a file: the dry-run line names the config it would read. No ssh
+    // is involved: dry-run touches nothing, so no fake TV is needed here.
+    install('alvidaa', { sleep: () => {}, model: '50a51huv',
+      builder: stubBuildForWiring(t), dryRun: true });
+    assert.ok(logs.some(l => /\[dry-run\] input art: would read .*config\.json/.test(l)), logs.join('\n'));
+
+    // With --input-art: the dry-run line lists exactly what would be baked.
+    logs.length = 0;
+    const dir = fs.mkdtempSync('/tmp/alvidaa-input-art-dry-');
+    const mapFile = path.join(dir, 'art.json');
+    fs.writeFileSync(mapFile, JSON.stringify({ hdmi2: '/x/ps5-bg.png', tv: '/x/tv-bg.png' }));
+    install('alvidaa', { sleep: () => {}, model: '50a51huv',
+      builder: stubBuildForWiring(t), dryRun: true, inputArtFile: mapFile });
+    assert.ok(logs.some(l => /\[dry-run\] would bake .*hdmi2.*tv/.test(l)), logs.join('\n'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  } finally { console.log = original; }
+});
+
+test('--input-art and --no-input-art parse, and --input-art takes a value', () => {
+  const parsed = parse(['node', 'x', 'install', 'alvidaa', '--model', '50a51huv',
+    '--host', '192.0.2.10', '--no-input-art', '--input-art', '/tmp/art.json']);
+  assert.equal(parsed.opts.noInputArt, true);
+  assert.equal(parsed.opts.inputArtFile, '/tmp/art.json');
+  assert.equal(parse(['node', 'x', 'status']).opts.noInputArt, false);
+  assert.equal(parse(['node', 'x', 'status']).opts.inputArtFile, null);
+});
+
+test('input art: the local-file reader accepts a map or a saved bridge config', () => {
+  const fromMap = inputArtFromFileText('{"HDMI2":"/x/bg.png","tv":"https://x/y.png"}');
+  assert.deepEqual(fromMap.map, { hdmi2: '/x/bg.png' });
+  assert.deepEqual(fromMap.warnings, ['tv']);
+  const fromCfg = inputArtFromFileText(ART_CFG);
+  assert.deepEqual(fromCfg.map, { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' });
+  assert.deepEqual(fromCfg.warnings, ['hdmi3']);
+  const bad = inputArtFromFileText('{');
+  assert.equal(bad.map, null);
+  assert.match(bad.note, /not valid JSON/);
+  const arr = inputArtFromFileText('[]');
+  assert.equal(arr.map, null);
+  assert.match(arr.note, /not a JSON object/);
 });
