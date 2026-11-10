@@ -93,17 +93,42 @@ The pipeline is config -> build -> global:
    `bridge/config.go`, passed through to clients as `bg`/`logo` on every source
    by `bridge/state.go`.
 2. **Build.** `native-install.cjs` reads that config over the SSH lane and
-   bakes `{ <lowercased key>: <bg> }` into the candidate via the builder's
+   bakes `{ <lowercased key>: <art> }` into the candidate via the builder's
    `options.inputArt`, which lands as `self.AlvidaaNativeInputArt`. The native
    component's single art slot is the backdrop, so a config entry's `bg` fills
-   it; a logo-only entry bakes nothing rather than stretching tile art over
-   the whole screen (the canvas page renders logos properly). Missing config,
-   no `inputs` section, an unreadable file or zero usable entries all mean
-   "build without art" — one line says which, and the install succeeds.
-   `--no-input-art` skips the read; `--input-art <file.json>` takes a local map
-   (or a saved bridge config) when the TV is unreachable; `--dry-run` says what
-   would be baked. A remote URL is dropped with a warning naming the input.
-3. **Component.** `syncArt()` resolves the focused input through
+   it (a `logo` is tile art for the canvas page; the canvas renders it there).
+   Missing config, no `inputs` section, an unreadable file or zero usable
+   entries all mean "build without art" — one line says which, and the install
+   succeeds. `--no-input-art` skips the read; `--input-art <file.json>` takes a
+   local map (or a saved bridge config) when the TV is unreachable; `--dry-run`
+   says what would be baked. A remote URL is dropped with a warning naming the
+   input.
+3. **Device-class silhouettes fill the gaps** (`device-art.cjs`, issue #60).
+   The TV's *names* are free, so for every input with no configured backdrop
+   the installer bakes a class silhouette keyed by the name the TV reports:
+   the config entry's `name` when it has one, else the port label itself.
+   Config art always wins — an owner who supplies a real image keeps it — and
+   `--no-device-art` skips the matcher. A configured-but-remote URL is refused
+   with its warning and is deliberately *not* masked by a silhouette.
+   **Decision: silhouettes, not brand renders.** The owner's reference photo
+   shows photographic product renders; we deliberately do not ship that.
+   Vendor marketing photography is not ours to license and per-device renders
+   are a minefield; the launcher is minimal dark-glass line art, which a
+   photographic render would fight; and a silhouette per device *class* is
+   reusable across brands with no per-device asset. The icons are vendored
+   Lucide (ISC; `cast`/`monitor`/`tv` are Feather-derived, MIT — attribution
+   and the verbatim licence text live in `tools/launcher-host/input-art/`),
+   with `#94a3b8` baked in (6.73:1 contrast on the normal tile, 5.63:1 on the
+   focused tile — checked, not guessed). The match runs most specific intent
+   first: controllers (`nintendo|switch|playstation|ps4|ps5|xbox|gamepad|
+   controller` -> gamepad-2), streaming (`apple tv|appletv|chromecast|fire tv|
+   fire stick|roku|streaming` -> cast), computers (`steam|mini pc|desktop|
+   computer|pc` -> cpu), discs (`blu-?ray|dvd|disc|player`), sticks
+   (`usb|stick|dongle` -> usb), displays (`monitor|display`), the tuner
+   (`tv|television|antenna|cable|satellite|tuner` -> tv), and everything else
+   -> box. "fire tv" and "apple tv" hit cast before the bare `tv` keyword —
+   that ordering is pinned by tests because it is the one that breaks.
+4. **Component.** `syncArt()` resolves the focused input through
    `inputArtFor()`: the `sourceId` first (a build-time map may still key by
    id), then the lowercased, trimmed port label (`name`) — that is what the
    config keys are derived from — then the lowercased resolved display name,
@@ -112,7 +137,11 @@ The pipeline is config -> build -> global:
 The same refusal rules as everywhere else apply at render time:
 `allowedInputArt()` accepts local files only (`var/local/storeAppIcon/...`,
 `file:///...`, absolute paths) and inline data URIs
-(`data:image/(png|jpeg|webp);base64,...`); a remote URL — including
+(`data:image/(png|jpeg|webp|svg+xml);base64,...`). The `svg+xml` form is here
+for the silhouettes: an SVG rendered in an `<img>` or a `background-image`
+cannot execute script, the URI is still local (nothing is fetched), and it is
+~700 bytes against a raster's kilobytes; only the base64 form is accepted, not
+an unencoded `data:image/svg+xml,` URL. A remote URL — including
 `vidaahub.com` — never renders, so a refused value means the wallpaper, not a
 network fetch. When the global is absent the whole layer is omitted. Focused
 art cross-fades over 300ms via two stacked layers (incoming 0->1, outgoing
@@ -438,7 +467,9 @@ Back ownership, action failures, toast HUD timing and expiry, remote number
 hotkeys (0-9), boot auto-switch countdown (firing, cancel, live input guards),
 per-input wallpaper art cross-fade (including the fade-out when the next input
 has no art) and URL rejection policy, favorite tiles rendering the real icon
-with the star fallback, the settings surface (door ownership, root rows,
+with the star fallback, the device-class silhouette matcher (keyword order,
+fire-tv/apple-tv precedence, fallback, SVG data-URI round-trip, vendored-icon
+licences), the settings surface (door ownership, root rows,
 auto-switch toggle, hide/unhide, pin cap, keyboard rename, blank-draft delete,
 Reset row, only-list rule, absent-storage no-ops, hotkey suppression, TTS
 labels), render structure and scaling, the entry's variant selection, and the
