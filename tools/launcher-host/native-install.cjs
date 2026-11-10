@@ -4,7 +4,7 @@
  *
  *   node native-install.cjs list
  *   node native-install.cjs install <variant> --model <id> --host <ip> [--force] [--no-watcher]
- *       [--no-input-art] [--input-art <file.json>]
+ *       [--no-input-art] [--input-art <file.json>] [--no-device-art]
  *   node native-install.cjs rollback --model <id> --host <ip> [--no-watcher]
  *   node native-install.cjs status   --model <id> --host <ip>
  *
@@ -30,12 +30,16 @@
  *     config or zero usable entries all build without art, and only values the
  *     component's own allowlist accepts are baked (a remote URL is dropped with
  *     a warning naming the input).
+ *   - inputs with no configured backdrop get a device-class silhouette from
+ *     device-art.cjs keyed by the name the TV reports; --no-device-art skips
+ *     that matcher. Owner art always wins; a refused URL is never masked.
  */
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
 const assert = require('node:assert/strict');
 const { hash, CONFIG } = require('./native-trial.cjs');
+const deviceArt = require('./device-art.cjs');
 
 const HERE = __dirname;
 const REPO = path.resolve(HERE, '../..');
@@ -318,7 +322,7 @@ function watcherStep(opts, m, mode, what) {
 // canvas page already renders logos properly. A logo-only entry therefore
 // bakes nothing and is counted, not silently swallowed.
 const INPUT_ART_ALLOWED =
-  /^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp);base64,)/i;
+  /^(var\/local\/storeAppIcon\/|file:\/\/\/|\/(?!\/)|data:image\/(png|jpeg|webp|svg\+xml);base64,)/i;
 
 // Pure: one art candidate -> the value to bake, or '' when it must be refused.
 // The same rule the component's allowedInputArt() enforces: local files
@@ -329,34 +333,56 @@ function cleanInputArt(value) {
     value.trim() : '';
 }
 
-// Pure: a config `inputs` object -> { map, warnings, logoOnly, baked }.
+// Pure: a config `inputs` object -> { map, warnings, filled, baked, skipped }.
 // Keys are lowercased here, matching what the bridge (state.go) and the
 // component both match against.
-function inputArtFromInputs(inputs) {
+// Owner art always wins. Where an input has NO backdrop configured (logo is
+// tile art and does not fill this slot), the device-class matcher supplies a
+// silhouette keyed by the name the TV reports, so an owner who only names
+// their ports still gets art. A configured-but-refused bg is the owner's
+// mistake to see: the warning names it and no silhouette masks it.
+function inputArtFromInputs(inputs, opts) {
+  const fill = !(opts && opts.noDeviceArt);
   const map = {};
   const warnings = [];
-  let logoOnly = 0, baked = 0;
+  const filled = [];
+  let baked = 0, skipped = 0;
   for (const [key, entry] of Object.entries(inputs)) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const name = String(key).trim().toLowerCase();
+    if (!name) continue;
     const bg = typeof entry.bg === 'string' ? entry.bg.trim() : '';
     const logo = typeof entry.logo === 'string' ? entry.logo.trim() : '';
-    if (!name || (!bg && !logo)) continue;
-    if (!bg) { logoOnly++; continue; }
-    if (!cleanInputArt(bg)) {
-      warnings.push(name);
+    if (bg) {
+      if (!cleanInputArt(bg)) {
+        warnings.push(name);
+        skipped++;
+        continue;
+      }
+      map[name] = bg;
+      baked++;
       continue;
     }
-    map[name] = bg;
-    baked++;
+    // No backdrop configured — logo is tile art and does not fill this slot.
+    // The gap the silhouettes exist for (issue #60): an entry that only
+    // names its port still gets art.
+    if (fill) {
+      const art = deviceArt.artForName(entry.name || key);
+      if (art) {
+        map[name] = deviceArt.dataUriFor(entry.name || key);
+        filled.push({ name, icon: art.icon });
+        continue;
+      }
+    }
+    skipped++;
   }
-  return { map, warnings, logoOnly, baked };
+  return { map, warnings, filled, baked, skipped };
 }
 
 // Pure: bridge config text -> { map, note, warnings }. Never throws: art is
 // decoration, and no config / no inputs / unreadable / zero entries all mean
 // "build without art" — the note says which of those happened, in one line.
-function inputArtFromConfigText(text) {
+function inputArtFromConfigText(text, opts) {
   if (typeof text !== 'string' || !text.trim()) {
     return { map: null, note: 'no bridge config on the TV; building without input art' };
   }
@@ -370,21 +396,31 @@ function inputArtFromConfigText(text) {
   if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
     return { map: null, note: 'config has no inputs section; building without input art' };
   }
-  const art = inputArtFromInputs(inputs);
-  if (art.baked === 0) {
+  const art = inputArtFromInputs(inputs, opts);
+  const total = art.baked + art.filled.length;
+  if (total === 0) {
     return {
       map: null,
-      note: 'config inputs carry no usable backdrop art' +
-        (art.logoOnly ? ' (' + art.logoOnly + ' logo-only: tile art, not baked)' : '') +
-        '; building without input art',
+      note: 'config inputs carry no usable backdrop art (' +
+        [art.baked + ' from config',
+          art.filled.length + ' silhouettes' +
+            ((opts && opts.noDeviceArt) ? ' (--no-device-art)' : ''),
+          art.skipped + ' left empty'].join(', ') +
+        '); building without input art',
       warnings: art.warnings
     };
   }
+  const parts = [];
+  if (art.baked) parts.push(art.baked + ' from config');
+  if (art.filled.length) {
+    parts.push(art.filled.length + (art.filled.length === 1 ? ' silhouette: ' : ' silhouettes: ') +
+      art.filled.map(f => f.name + '=' + f.icon).join(', '));
+  }
+  if (art.skipped) parts.push(art.skipped + ' left empty' +
+    ((opts && opts.noDeviceArt) ? ' (--no-device-art)' : ''));
   return {
     map: art.map,
-    note: 'input art: baked backdrop art for ' + art.baked + ' input(s): ' +
-      Object.keys(art.map).join(', ') +
-      (art.logoOnly ? '; ' + art.logoOnly + ' logo-only skipped (tile art)' : ''),
+    note: 'input art: ' + parts.join(', '),
     warnings: art.warnings
   };
 }
@@ -393,7 +429,7 @@ function inputArtFromConfigText(text) {
 // plain { key: art } map, or a saved bridge config whose `inputs` section
 // carries the bg/logo roles. Remote URLs are dropped with a named warning,
 // exactly like the TV path.
-function inputArtFromFileText(text) {
+function inputArtFromFileText(text, opts) {
   let parsed;
   try { parsed = JSON.parse(text); }
   catch (error) {
@@ -401,7 +437,7 @@ function inputArtFromFileText(text) {
   }
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
       parsed.inputs && typeof parsed.inputs === 'object' && !Array.isArray(parsed.inputs)) {
-    return inputArtFromConfigText(text);
+    return inputArtFromConfigText(text, opts);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { map: null, note: 'the input-art file is not a JSON object; building without input art' };
@@ -447,7 +483,7 @@ function readInputArt(opts) {
     catch (error) {
       return { map: null, note: '--input-art file unreadable (' + error.message + '); building without input art' };
     }
-    const art = inputArtFromFileText(text);
+    const art = inputArtFromFileText(text, opts);
     if (opts.dryRun && art.map) {
       art.note = '[dry-run] would bake ' + art.note.replace(/^input art: /, '');
     } else if (opts.dryRun) {
@@ -458,13 +494,15 @@ function readInputArt(opts) {
   if (opts.dryRun) {
     return {
       map: null,
-      note: '[dry-run] input art: would read ' + CONFIG + ' from the TV and bake the inputs\' backdrop art' +
+      note: '[dry-run] input art: would read ' + CONFIG + ' from the TV, bake the inputs\' backdrop art' +
+        ' and fill unconfigured inputs with class silhouettes' +
+        (opts.noDeviceArt ? ' (--no-device-art: silhouettes skipped)' : '') +
         ' (--input-art <file.json> previews a local map instead)'
     };
   }
   try {
     return inputArtFromConfigText(String(sshFn(opts)(opts,
-      'export PATH=/bin:/usr/bin:/sbin:/usr/bin; cat ' + CONFIG)));
+      'export PATH=/bin:/usr/bin:/sbin:/usr/bin; cat ' + CONFIG)), opts);
   } catch (error) {
     return { map: null, note: 'could not read the TV config (' +
       String(error.message).split('\n')[0] + '); building without input art' };
@@ -563,7 +601,7 @@ function parse(argv) {
   const command = args.shift();
   const positional = [];
   const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
-    noWatcher: false, noInputArt: false, inputArtFile: null };
+    noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--model') opts.model = args[++i];
@@ -573,6 +611,7 @@ function parse(argv) {
     else if (arg === '--force') opts.force = true;
     else if (arg === '--no-watcher') opts.noWatcher = true;
     else if (arg === '--no-input-art') opts.noInputArt = true;
+    else if (arg === '--no-device-art') opts.noDeviceArt = true;
     else if (arg === '--input-art') opts.inputArtFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
     else positional.push(arg);

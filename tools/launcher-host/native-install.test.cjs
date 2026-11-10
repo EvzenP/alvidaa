@@ -460,12 +460,14 @@ test('--no-watcher parses as an opt-in skip, off by default', () => {
   assert.equal(parse(['node', 'x', 'status']).opts.noWatcher, false);
 });
 
-// --- per-input art (issue #34) ----------------------------------------------
+// --- per-input art (issue #34, gaps filled by #60) ---------------------------
 //
 // The bridge config's inputs carry bg (backdrop) and logo (tile image); the
-// native component's single art slot is the backdrop, so bg fills it and a
-// logo-only entry bakes nothing rather than stretching tile art over the
-// screen. The TV reports names but never art — the config is the only source.
+// native component's single art slot is the backdrop, so bg fills it. Where
+// an input has no backdrop configured, the device-class matcher (issue #60)
+// supplies a silhouette keyed by the name the TV reports. Owner art always
+// wins; a configured-but-remote URL is refused with a warning and never
+// masked by a silhouette.
 
 const ART_CFG = JSON.stringify({
   watcher: { enabled: true },
@@ -482,18 +484,23 @@ test('input art: the allowlist matches the component exactly, remote is refused'
   assert.equal(cleanInputArt('file:///x.png'), 'file:///x.png');
   assert.equal(cleanInputArt('/next/assets/x.png'), '/next/assets/x.png');
   assert.equal(cleanInputArt('data:image/png;base64,AAA'), 'data:image/png;base64,AAA');
+  assert.equal(cleanInputArt('data:image/svg+xml;base64,AAA'), 'data:image/svg+xml;base64,AAA',
+    'the silhouettes ride the same allowlist the component widened for them');
   assert.equal(cleanInputArt('data:image/gif;base64,AAA'), '', 'gif is not in the component allowlist');
   assert.equal(cleanInputArt('http://x/y.png'), '');
   assert.equal(cleanInputArt('https://x/y.png'), '');
 });
 
-test('input art: builds the map from config inputs, logo-only skipped, remote dropped', () => {
+test('input art: builds the map from config inputs, silhouettes fill the gaps, remote dropped', () => {
   const art = inputArtFromConfigText(ART_CFG);
-  assert.deepEqual(art.map, { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' },
-    'bg fills the backdrop slot, lowercased key');
-  assert.deepEqual(art.warnings, ['hdmi3'], 'the dropped input is named for the warning');
-  assert.match(art.note, /logo-only/);
-  assert.equal(art.map.tv, undefined, 'a logo-only entry never becomes a guessed backdrop');
+  assert.equal(art.map.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png',
+    'owner bg fills the backdrop slot, lowercased key');
+  assert.match(art.map.tv, /^data:image\/svg\+xml;base64,/,
+    'the logo-only gap is filled by the class matcher (TV -> tv silhouette)');
+  assert.deepEqual(art.warnings, ['hdmi3'], 'the refused input is named for the warning');
+  assert.match(art.note, /1 from config/);
+  assert.match(art.note, /silhouette: tv=tv/);
+  assert.match(art.note, /1 left empty/);
 });
 
 test('input art: no config, no inputs, bad JSON and zero entries all build without art', () => {
@@ -502,7 +509,6 @@ test('input art: no config, no inputs, bad JSON and zero entries all build witho
     ['{ oops', /not valid JSON/],
     ['{"watcher":{"enabled":true}}', /no inputs section/],
     ['{"inputs":{}}', /no usable backdrop art/],
-    ['{"inputs":{"HDMI2":{"logo":"/x/logo.png"}}}', /logo-only/]
   ]) {
     const art = inputArtFromConfigText(text);
     assert.equal(art.map, null, JSON.stringify(text));
@@ -516,7 +522,9 @@ test('input art: install passes the map to the builder', t => {
   let seen = 'not called';
   const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
   install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder });
-  assert.deepEqual(seen, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+  assert.equal(seen.inputArt.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png');
+  assert.match(seen.inputArt.tv, /^data:image\/svg\+xml;base64,/,
+    'the TV gap is filled with the class silhouette');
 });
 
 test('input art: missing or unusable config never fails the install', t => {
@@ -589,7 +597,7 @@ test('input art: --no-input-art skips the TV read, --input-art takes a local map
     install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
       builder: builderMap, inputArtFile: mapFile });
   } finally { console.warn = originalWarn; }
-  assert.deepEqual(seenMap, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+  assert.equal(seenMap.inputArt.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png');
   assert.ok(warnings.some(w => w.includes('bad') && /remote URL/.test(w)), warnings.join('\n'));
 
   // --input-art with a saved bridge config takes the bg/logo path too
@@ -599,7 +607,8 @@ test('input art: --no-input-art skips the TV read, --input-art takes a local map
   const builderCfg = stubBuildForWiring(t, (a, b, c, options) => { seenCfg = options; });
   install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
     builder: builderCfg, inputArtFile: cfgFile });
-  assert.deepEqual(seenCfg, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+  assert.equal(seenCfg.inputArt.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png');
+  assert.match(seenCfg.inputArt.tv, /^data:image\/svg\+xml;base64,/);
 
   // an unreadable file still builds, without art
   let seenMissing = 'not called';
@@ -642,12 +651,89 @@ test('--input-art and --no-input-art parse, and --input-art takes a value', () =
   assert.equal(parse(['node', 'x', 'status']).opts.inputArtFile, null);
 });
 
+// --- device-class silhouettes (issue #60) ------------------------------------
+
+test('device art: silhouettes fill the gaps but never override config art', () => {
+  // An unnamed port key matches on the key itself ("hdmi1" -> box); a named
+  // entry matches on the name the owner gave it; config bg always wins.
+  const cfg = JSON.stringify({
+    watcher: { enabled: true },
+    inputs: {
+      'HDMI1': { name: 'HDMI1' },
+      'HDMI2': { name: 'PlayStation 5', bg: '/var/local/alvidaa/launcher/ps5-bg.png' },
+      'HDMI3': { name: 'Nintendo Switch' }
+    }
+  });
+  const art = inputArtFromConfigText(cfg);
+  assert.equal(art.map.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png',
+    'configured art is passed through untouched');
+  assert.match(art.map.hdmi3, /^data:image\/svg\+xml;base64,/);
+  const hdmi3Svg = Buffer.from(art.map.hdmi3.split(',')[1], 'base64').toString();
+  assert.match(hdmi3Svg, /gamepad-2|lucide-gamepad/, 'Nintendo Switch -> controller silhouette');
+  const hdmi1Svg = Buffer.from(art.map.hdmi1.split(',')[1], 'base64').toString();
+  assert.match(hdmi1Svg, /lucide-box|lucide-gamepad|lucide-tv|lucide-cast|lucide-cpu|lucide-disc|lucide-usb|lucide-monitor/,
+    'an unnamed port still gets its class silhouette, keyed by the reported name');
+  assert.match(art.note, /2 silhouettes: hdmi1=box, hdmi3=gamepad-2/);
+});
+
+test('device art: --no-device-art builds without silhouettes, config art unaffected', t => {
+  const art = inputArtFromConfigText(ART_CFG, { noDeviceArt: true });
+  assert.equal(art.map.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png',
+    'owner art survives');
+  assert.equal(art.map.tv, undefined, 'no silhouette fills the gap');
+  assert.match(art.note, /2 left empty \(--no-device-art\)/);
+  // Through the whole install path, too: the flag reaches the matcher.
+  const tv = watcherFixture(t, ART_CFG);
+  let seen = 'not called';
+  const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
+  install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv',
+    builder, noDeviceArt: true });
+  assert.deepEqual(seen, { inputArt: { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' } });
+});
+
+test('device art: an input with no name gets no art and the install still succeeds', t => {
+  // An empty-string key (or whitespace-only) is the one shape the matcher
+  // refuses; it must not throw, and the install carries on without it.
+  const cfg = JSON.stringify({
+    watcher: { enabled: true },
+    inputs: {
+      '': { bg: '/var/local/alvidaa/launcher/x.png' },
+      '   ': { name: 'PlayStation 5' },
+      'HDMI2': { name: 'PlayStation 5' }
+    }
+  });
+  const art = inputArtFromConfigText(cfg);
+  assert.deepEqual(Object.keys(art.map), ['hdmi2'],
+    'the nameless inputs are skipped, the named one is filled');
+  const tv = watcherFixture(t, cfg);
+  let seen = 'not called';
+  const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
+  const logs = [];
+  const original = console.log;
+  console.log = message => logs.push(String(message));
+  try {
+    install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder });
+  } finally { console.log = original; }
+  assert.deepEqual(seen, { inputArt: { hdmi2: art.map.hdmi2 } });
+  assert.ok(logs.some(l => /input art: .*silhouette/.test(l)), logs.join(' | '));
+  assert.ok(logs.some(l => l.includes('mode: install')), 'install completed');
+});
+
+test('device art: --no-device-art parses, off by default', () => {
+  const parsed = parse(['node', 'x', 'install', 'alvidaa', '--model', '50a51huv',
+    '--host', '192.0.2.10', '--no-device-art']);
+  assert.equal(parsed.opts.noDeviceArt, true);
+  assert.equal(parse(['node', 'x', 'status']).opts.noDeviceArt, false);
+});
+
 test('input art: the local-file reader accepts a map or a saved bridge config', () => {
   const fromMap = inputArtFromFileText('{"HDMI2":"/x/bg.png","tv":"https://x/y.png"}');
   assert.deepEqual(fromMap.map, { hdmi2: '/x/bg.png' });
   assert.deepEqual(fromMap.warnings, ['tv']);
   const fromCfg = inputArtFromFileText(ART_CFG);
-  assert.deepEqual(fromCfg.map, { hdmi2: '/var/local/alvidaa/launcher/ps5-bg.png' });
+  assert.equal(fromCfg.map.hdmi2, '/var/local/alvidaa/launcher/ps5-bg.png');
+  assert.match(fromCfg.map.tv, /^data:image\/svg\+xml;base64,/,
+    'a saved bridge config fills its gaps too');
   assert.deepEqual(fromCfg.warnings, ['hdmi3']);
   const bad = inputArtFromFileText('{');
   assert.equal(bad.map, null);
