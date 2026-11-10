@@ -133,6 +133,31 @@ note that static custom names can go stale if the physical device changes.
 | `alvidaa_favorites` | array of strings | `[]` | Pinned favorite app IDs in view 2 (max 5), launched directly. Stale IDs dropped silently. |
 
 
+## Parity audit against watcher UI (launcher/index.html r4)
+
+Feature-by-feature walk comparing the canvas watcher UI (`launcher/index.html` r4) against the native Home component (`native-alvidaa.js`):
+
+| Feature | Watcher UI (`launcher/index.html` r4) | Native Home (`native-alvidaa.js`) | Status | Notes |
+| --- | --- | --- | --- | --- |
+| **Clock and date** | Top-left hours/minutes hierarchy (weight 300, dimmed `:`) and uppercase date | Top-left 116px hours/minutes hierarchy (weight 300, negative letter spacing, dimmed `:`) and uppercase date with bullet separator | `parity` | Driven by 1s interval; scales with viewport |
+| **Inputs dock and signal dot** | Bottom dock with 5 cards per page; emerald green dot & `LIVE` pill for active signal, `STANDBY` for no signal; display icon / glyph fallback | Bottom dock with 6 cards per page; emerald green dot & `LIVE` pill for active signal, `STANDBY` for no signal; minimal hardware display icon or glyph fallback | `divergence` | Dock geometry differs (native displays 6 tiles/page `DOCK_PAGE = 6` vs watcher's 5 tiles/page); card scaled for 1080p |
+| **Focused big label** | Large 42px header above dock showing input device name with `connected` / `no signal` sub-label | Large 84px header above dock showing resolved input name with `connected` (emerald) / `no signal` (slate) sub-label | `parity` | Follows focused dock selection |
+| **Name resolution** | Server-driven name resolution falling back to port ID | Strict bridge hierarchy: `alvidaa_custom_names` -> `displayname2` -> `rename` -> `name` -> `sourceId` -> `sdk.i18n.t` translation | `parity` | Custom names explicitly override vendor values |
+| **Apps overlay** | Modal dark glass backdrop; 5-column grid; web/local icons with brand color fallback; keyboard navigation; Back/Esc closes | Modal dark glass backdrop; 6-column grid; `appIcon()` with local file + `*.vidaahub.com` vendor host allowlist; brand color letter badge fallback; Back closes | `divergence` | Grid geometry differs (native is 6-column grid `OVERLAY_COLS = 6` vs watcher's 5-column `OV_COLS = 5`); native adds vendor icon host allowlist |
+| **Stock settings** | Not present (watcher operates over remote MQTT) | Dedicated "Settings" tile in view 2 (`⚙`, "TV settings") opening TV settings via `platform.openSettings()` | `native-only` | Calls `setting.open("settings")` |
+| **Smart focus** | Active signal input preferred; falls back to `localStorage` last-used; falls back to dock 0 | Active signal input preferred; falls back to `sdk.storage` `alvidaa_last_used`; falls back to dock 0 | `parity` | Executed on `routeFocus()` (`mounted`, `activated`, route change) |
+| **Auto-switch countdown** | 3500ms countdown when exactly 1 live input detected; bottom HUD; cancels on keypress; triggers source change | Opt-in via `alvidaa_auto_switch`; 3500ms countdown on first payload if exactly 1 live input; shared HUD pill; cancels on any handled key; triggers `changeSource` | `parity` | Disabled by default; cancel shows toast notice |
+| **Remote number hotkeys** | Digits 1–9 focus & activate dock tile; digit 0 resets to dock 0 | Digits 1–9 focus & activate dock tile; digit 0 focuses dock 0 without activating; numeral keycaps 1–9 on tiles; guarded by `sdk.key.KEYMAP` | `parity` | Guarded against open overlay; unhandled digits pass through |
+| **Pinned favorites / shortcuts** | View 2 displays `shortcuts` array (URL shortcuts with `★` glyph) | View 2 displays up to 5 pinned favorite apps from `alvidaa_favorites`; activates app directly without opening overlay; clamped safely | `parity` | *Design note:* Favorites render with a star glyph (`★`), not the full app icon |
+| **Per-input wallpaper art** | Daily rotating wallpaper images or ambient gradients; no per-input art mapping | Build-time map `self.AlvidaaNativeInputArt` (local/data URI only); two-phase stacked cross-fade (incoming 0->1, outgoing 1->0) over 300ms | `native-only` | *Edge case:* Switching to an input without configured art holds outgoing art at opacity 1 for 300ms, then cuts to wallpaper |
+| **Toast HUD** | Viewport-fixed bottom glass capsule for action status and error messages | Viewport-fixed bottom floating glass pill HUD with opacity/transform transitions; drives action feedback, failure alerts, auto-switch notices | `parity` | Replaced legacy raw status text line |
+| **App filtering and custom names** | Server-side configuration | Storage-backed `alvidaa_hidden_apps`, `alvidaa_only_apps`, and `alvidaa_custom_names` with no-op fallback | `parity` | *Product gap:* No in-launcher settings UI exists to write these keys; preferences are currently read-only consumers of `sdk.storage` |
+| **Last-used focus persistence** | Saved to `localStorage` on activation; restored on cold boot | Persisted to `sdk.storage` key `alvidaa_last_used` on dock activation; restored on cold launch | `parity` | Used as smart index fallback when no input has signal |
+| **Offline paint / cache** | `localStorage` cold cache (`alvidaa_cache_v1`); shows reconnecting/offline indicator when disconnected | Runs offline natively inside the TV browser runtime; bundled directly into vendor package; requires no network or server connection | `parity` | Inherently offline by architecture |
+| **Diagnostics** | On-canvas text line (`NEXT r2+...`), red composite pixel test square, error overlay banner, `/api/probe` beacon | Old diagnostic line ("Native - N apps - M inputs", "Waiting for TV data") was **deliberately removed** with the toast HUD; errors surface as toast alerts; `announce()` provides TTS | `divergence` | Deliberate divergence: diagnostic text line removed in favor of clean consumer HUD |
+| **System setup / install tile** | Row 2 "INSTALL AS APP" webapp installer calling `HiUtils_createRequest` / `Hisense_installApp` | Not applicable; native Home is installed directly as the `/Launcher` route component in lane 3 | `missing` | Intentional divergence: lane 1 installer pattern not applicable to lane 3 |
+
+
 ## Build
 
 ```sh
@@ -150,32 +175,153 @@ The candidate is: stock bundle, then `native-platform.js`, `native-alvidaa.js`,
 `AlvidaaNativeComponent`, which `native-alvidaa.js` sets; Free My TV builds have
 no such global and fall back to `AlvidaaFreeMyTV`.
 
-## What to verify on hardware, in order
+## On-TV verification checklist
 
-1. **Preflight and pin** the stock file (size, owner, mode, md5, sha256) before
-   any write. `docs/models/75U8QTUK/…/findings/09-native-home.md` is the shape.
-2. **Does this build have the writable bundle?** The reference `50A51HUV` /
-   `09.01O.P0813` has `/APPS/channelA/hisenseUI/` and no
-   `tv.vidaa.app.operationui` under `/APPS/pkgs/`. If the module is absent,
-   lane 3 does not apply to that build and the `hisenseUI` route is the only
-   option, with the caveats in the 55A7KAU findings 05 and 12.
-3. **First paint** with the stock app list and inputs. If the dock is empty,
-   the platform contract is wrong for that build, not the design.
-4. **Input names.** If they read `HDMI2`, the build does not expose
-   `displayname2` and the adapter should say so rather than guess.
-5. **Key dispatch.** Arrows, OK and Back must not double-fire: the component
-   listens on `key-down` at the body in the bubbling phase and stops
-   propagation only for keys it handled.
-6. **Back at the dock** must still reach the vendor. If it does not, the
-   handler is eating too much.
-7. **Launch and Settings** through APC, including a parental-locked app, to
-   confirm no bypass flags leaked in.
+> [!IMPORTANT]
+> **Hardware Status Discipline**: Every behavior listed below is a **claim (pending hardware verification)** until physically executed and observed on target TV hardware per [AGENTS.md](../../AGENTS.md). Node VM tests verify state machines and contracts, not TV rendering or vendor driver quirks.
 
-## Rollback
+### 0. Preflight, bundle check and safety
 
-Unchanged from the shared path: `native-home.cjs restore` puts the pinned stock
-files back and restarts the engine. Do not test this variant without a written
-rollback and a private copy of the stock bundle.
+1. **Root access & network preflight**: Verify TV IP and root shell wrapper:
+   ```sh
+   ./server/tv id
+   ```
+   *Claim: Root shell responds with uid=0(root) gid=0(root).*
+2. **Writable bundle verification**: Check target model filesystem for writable `/APPS/channelA/hisenseUI/`:
+   ```sh
+   ./server/tv 'ls -ld /APPS/channelA/hisenseUI'
+   ```
+   *Claim: Build contains writable hisenseUI package and no blocking operationui module (as on 50A51HUV / 09.01O.P0813).*
+3. **Preflight and pin stock bundle**: Record exact size, owner, permissions, and hashes before modifying:
+   ```sh
+   ./server/tv 'md5sum /APPS/channelA/hisenseUI/dist/app.js; sha256sum /APPS/channelA/hisenseUI/dist/app.js'
+   ```
+   Save the output and verify against the expected hash.
+
+### Numbered verification sequence
+
+1. **First paint & layout structure**
+   - **What to press**: Restart the UI engine: `./server/tv 'killall -9 hisenseUI'` (or reboot TV).
+   - **What to expect** *(Claim)*:
+     - Screen renders deep obsidian OLED background (`#07080c`) with wallpaper/ambient gradient and contrast wash (`rgba(6,8,12,0.55)`).
+     - Top-left displays hours/minutes typography (`116px`, weight 300, negative letter spacing, dimmed `:`) and uppercase date with bullet separator.
+     - Bottom dock displays inputs horizontally with 28px rounded corners and 1px borders.
+     - Top-right displays no web status pill or reconnection banner.
+     - Legacy diagnostic text ("Native - N apps...", "Waiting for TV data") does NOT appear anywhere on screen.
+
+2. **Smart initial focus on active signal**
+   - **What to press**: Boot TV with one active HDMI source transmitting video (e.g., PS5 on HDMI2). Do not touch the remote.
+   - **What to expect** *(Claim)*:
+     - Initial focus automatically selects the active HDMI2 card without remote interaction.
+     - Focused dock card scales up (`scale(1.03)` with 140ms ease-out).
+     - Live signal badge displays emerald green dot with `LIVE` pill; inactive cards show `STANDBY`.
+     - Big label above dock displays resolved input name ("PlayStation 5" via `displayname2`) with emerald `connected` sub-label.
+
+3. **Opt-in boot auto-switch countdown**
+   - **What to press**: Enable `alvidaa_auto_switch` in storage. Note that `sdk.storage` is a browser global inside the `hisenseUI` runtime origin; shell node (`./server/tv node`) cannot access it. Furthermore, on this firmware (`09.01O.P0813`), while the engine launches with `--remote_debugging_port=9666`, findings 12 confirmed that port 9666 does not actually listen on the TV. Because `native-alvidaa` does not yet expose an on-screen settings editor UI, **there is currently no supported way to evaluate JS or write preference keys in the `hisenseUI` origin on this build** (*product gap*). If testing in an environment with page console access:
+     ```js
+     sdk.storage.set("alvidaa_auto_switch", true);
+     ```
+     Restart UI with exactly one live input connected. Do not press any keys.
+   - **What to expect** *(Claim)*:
+     - Shared floating glass HUD pill appears at bottom center: `Switching to <name> in 4s - press any key to stay`.
+     - HUD displays smooth countdown ticking down once per second.
+     - At zero, HUD disappears and TV switches to that source via `platform.changeSource()`.
+
+4. **Auto-switch cancellation on user keypress**
+   - **What to press**: Trigger auto-switch countdown (as above). During the 3.5s countdown window, press any navigation key (`ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown`, `OK`) or number key (`1`–`9`).
+   - **What to expect** *(Claim)*:
+     - Countdown terminates immediately and source switch is cancelled.
+     - Floating HUD pill transitions to toast notice: `auto-switch cancelled`.
+     - Toast expires and hides smoothly after 2.5s.
+     - TV remains on Home without switching away.
+
+5. **Dock navigation, scaling and edge clamping**
+   - **What to press**: Press `ArrowRight` repeatedly across the dock to the end, then press `ArrowLeft` back to the start.
+   - **What to expect** *(Claim)*:
+     - Focus shifts tile by tile with 140ms scale and border transition.
+     - Big label and connection sub-label update immediately with the focused input's resolved name.
+     - Dock smoothly pages 6 cards at a time when navigating past card 6 (`DOCK_PAGE = 6`).
+     - Pressing `ArrowLeft` on the first card or `ArrowRight` on the last card clamps safely without throwing, vibrating, or losing focus.
+
+6. **Remote number hotkeys (1–9 and 0)**
+   - **What to press**: While on dock view, press digit keys `1`, `2`, `3` on the remote control.
+   - **What to expect** *(Claim)*:
+     - Dock cards 1–9 display small numeral keycap badges in their top-right corner.
+     - Pressing `1`–`9` immediately shifts focus to dock index `digit - 1`, displays toast `Switching to <name>…`, and activates `changeSource`.
+     - Pressing `0` moves focus to dock index 0 without activating or switching sources.
+     - Pressing an out-of-range digit (e.g. `8` when only 3 inputs are present) does nothing and passes through unhandled (`return false`).
+
+7. **Per-input wallpaper art cross-fade**
+   - **What to press**: Build bundle with `self.AlvidaaNativeInputArt` mapping two inputs to valid local/data URIs. Navigate between the two inputs on the dock.
+   - **What to expect** *(Claim)*:
+     - Outgoing input art stays at opacity 1 while incoming art starts at opacity 0 and fades to 1 over 300ms.
+     - After 300ms, outgoing art layer unmounts cleanly from DOM.
+     - Switching to an input with *no* configured art holds outgoing art for 300ms and cuts cleanly to the wallpaper gradient.
+
+8. **View 2 vertical panning (Apps row and pinned favorites)**
+   - **What to press**: From dock view, press `ArrowDown`.
+   - **What to expect** *(Claim)*:
+     - Stage pans vertically upward by 1080px over a 350ms ease-out transition.
+     - View 2 renders `APPS` row: up to 5 pinned favorite apps (star glyph `★`, "Favorite" sub-label), followed by the `Apps` door card (`▦`) and `Settings` card (`⚙`).
+     - Pressing `ArrowUp` or `Back` from view 2 pans stage smoothly back down to dock view.
+
+9. **Direct launch of pinned favorites**
+   - **What to press**: In view 2, focus a pinned favorite card and press `OK/Enter`.
+   - **What to expect** *(Claim)*:
+     - Toast HUD pill displays `Opening <AppName>…`.
+     - Target app launches directly via `platform.launchApp(appId)`.
+     - The full apps overlay does NOT open.
+
+10. **Apps overlay grid & launch**
+    - **What to press**: In view 2, focus the `Apps` tile (`▦`) and press `OK/Enter`.
+    - **What to expect** *(Claim)*:
+      - Full-screen modal dark glass overlay (`rgba(3,5,9,0.86)`) fades in over the stage.
+      - 6-column grid displays all installed apps with local/vendor icons or brand color letter badges.
+      - Remote arrow keys navigate the grid (UP/DOWN steps by 6, LEFT/RIGHT steps by 1).
+      - Pressing `Back` closes the overlay and returns focus to view 2.
+      - Pressing `OK/Enter` on an app displays toast `Opening <AppName>…` and launches the app via APC.
+
+11. **Stock TV Settings door**
+    - **What to press**: In view 2, focus the `Settings` tile (`⚙`) and press `OK/Enter`.
+    - **What to expect** *(Claim)*:
+      - Toast HUD displays `Opening Settings…`.
+      - TV opens real stock Settings menu via `setting.open("settings")`.
+
+12. **Storage preferences & filtering (Product Gap)**
+    - **What to press**: As identified above, there is currently no supported mechanism on this build to inject JS into the `hisenseUI` origin (port 9666 does not listen; node on TV has no DOM/SDK reach) and `native-alvidaa` provides no in-launcher settings UI. In an environment with browser context access:
+      - `alvidaa_hidden_apps`: `sdk.storage.set("alvidaa_hidden_apps", ["Netflix"])` -> verify Netflix is hidden from Apps overlay.
+      - `alvidaa_only_apps`: `sdk.storage.set("alvidaa_only_apps", ["YouTube", "Plex"])` -> verify only those two apps appear in overlay.
+      - `alvidaa_custom_names`: `sdk.storage.set("alvidaa_custom_names", {"HDMI2": "Nintendo Switch"})` -> verify dock card and big label display "Nintendo Switch".
+    - **What to expect** *(Claim)*:
+      - Changes take effect upon returning to Home (`activated()`). On hardware today without page injection, preferences remain at their defaults.
+
+13. **Last-used focus fallback**
+    - **What to press**: Activate HDMI2, turn off all HDMI video sources so no input has signal, and restart UI.
+    - **What to expect** *(Claim)*:
+      - `smartIndex()` reads `alvidaa_last_used` from storage.
+      - Initial focus lands on HDMI2 instead of defaulting to dock index 0.
+
+14. **Back key ownership hierarchy**
+    - **What to press**: Test `Back` key in three contexts:
+      1. Inside Apps overlay: press `Back`.
+      2. In view 2: press `Back`.
+      3. In dock view: press `Back`.
+    - **What to expect** *(Claim)*:
+      1. Overlay closes; focus remains in view 2.
+      2. View 2 pans back to dock view (view 1).
+      3. At dock view, `handleKey()` returns `false` — key event is not consumed and reaches the vendor shell cleanly.
+
+### Rollback procedure
+
+If any test fails or TV exhibits instability, execute the rollback immediately on the TV via the root wrapper:
+
+```sh
+./server/tv 'LD_LIBRARY_PATH=/lib:/usr/local/lib:/basic/lib /opt/pkgs/tv.vidaa.app.phoenix/bin/phoenix /var/local/alvidaa/native-home/native-home.cjs restore'
+```
+
+`native-home.cjs restore` is the single supported rollback path. It requires root execution on the TV (`process.getuid() === 0`), uses the variant's home directory `/var/local/alvidaa/native-home`, and restores files atomically from the state manifest backup (`entry.backup` in `/var/local/alvidaa/native-home/state.json`), then restarts the vendor engine.
+*Claim: Pinned stock bundle is restored byte-for-byte; stock VIDAA launcher restarts cleanly.*
 
 ## Tests
 
