@@ -210,13 +210,15 @@ Feature-by-feature walk comparing the canvas watcher UI (`launcher/index.html` r
 
 ```sh
 node tools/launcher-host/build-native-alvidaa.cjs \
-  <private-stock-app.js> <expected-sha256> <private-output.js>
+  <private-stock-app.js> <private-output.js> <expected-sha256>
 ```
 
-The expected hash is a required argument. A build that cannot state which stock
-revision it targets cannot be rolled back safely, so the script refuses to
-guess. Output must stay under `firmware/` or `/tmp/`, same as the Free My TV
-build.
+Argument order is stock, output, hash — the hash is last (2026-11-10: this doc
+had it second, and following it verbatim fails with "expected sha256 of the
+stock bundle is required"). The expected hash is required. A build that cannot
+state which stock revision it targets cannot be rolled back safely, so the
+script refuses to guess. Output must stay under `firmware/` or `/tmp/`, same as
+the Free My TV build.
 
 The candidate is: stock bundle, then `native-platform.js`, `native-alvidaa.js`,
 `native-entry.js`. `native-entry.js` picks the variant from
