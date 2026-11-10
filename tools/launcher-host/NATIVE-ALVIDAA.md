@@ -83,12 +83,46 @@ When opt-in preference `alvidaa_auto_switch` is enabled in `sdk.storage` (defaul
 
 ### Per-input wallpaper art
 
-Focused inputs can display dedicated backdrop art behind the contrast wash:
+The TV reports the *name* of the device on a port (`displayname2` -> "PlayStation
+5") but never per-source art, so every image comes from config or is generated.
+The pipeline is config -> build -> global:
 
-- Configured at build time via `self.AlvidaaNativeInputArt`, a map of `sourceId` (string or number) to image URI.
-- `allowedInputArt()` restricts art sources strictly to local files (`file:///...`, `var/local/storeAppIcon/...`, absolute paths) or inline data URIs (`data:image/(png|jpeg|webp);base64,...`). Remote network URLs (including `vidaahub.com`) are rejected.
-- Smooth 300ms opacity cross-fade via two stacked art layers during focus transitions: the outgoing layer fades from 1 to 0 while the incoming layer fades from 0 to 1, driven by the focused `sourceId` with a 300ms cleanup timer.
-- Completely omitted when `self.AlvidaaNativeInputArt` is absent, preserving default background behavior.
+1. **Config.** The bridge's `/var/local/alvidaa/config.json` carries an
+   `inputs` map keyed by source name (`"hdmi2"`); each entry has `bg` (a
+   backdrop wallpaper) and `logo` (a tile image), both local paths — this is
+   `bridge/config.go`, passed through to clients as `bg`/`logo` on every source
+   by `bridge/state.go`.
+2. **Build.** `native-install.cjs` reads that config over the SSH lane and
+   bakes `{ <lowercased key>: <bg> }` into the candidate via the builder's
+   `options.inputArt`, which lands as `self.AlvidaaNativeInputArt`. The native
+   component's single art slot is the backdrop, so a config entry's `bg` fills
+   it; a logo-only entry bakes nothing rather than stretching tile art over
+   the whole screen (the canvas page renders logos properly). Missing config,
+   no `inputs` section, an unreadable file or zero usable entries all mean
+   "build without art" — one line says which, and the install succeeds.
+   `--no-input-art` skips the read; `--input-art <file.json>` takes a local map
+   (or a saved bridge config) when the TV is unreachable; `--dry-run` says what
+   would be baked. A remote URL is dropped with a warning naming the input.
+3. **Component.** `syncArt()` resolves the focused input through
+   `inputArtFor()`: the `sourceId` first (a build-time map may still key by
+   id), then the lowercased, trimmed port label (`name`) — that is what the
+   config keys are derived from — then the lowercased resolved display name,
+   so keying by "playstation 5" also works, custom renames included.
+
+The same refusal rules as everywhere else apply at render time:
+`allowedInputArt()` accepts local files only (`var/local/storeAppIcon/...`,
+`file:///...`, absolute paths) and inline data URIs
+(`data:image/(png|jpeg|webp);base64,...`); a remote URL — including
+`vidaahub.com` — never renders, so a refused value means the wallpaper, not a
+network fetch. When the global is absent the whole layer is omitted. Focused
+art cross-fades over 300ms via two stacked layers (incoming 0->1, outgoing
+1->0); moving to an input without art fades the outgoing layer out, so the
+wallpaper arrives as a cross-fade rather than a cut.
+
+The canvas page (lane 1) renders the same `bg`/`logo` payload fields directly
+from the bridge: the focused input's `bg` cross-fades over the date wallpaper
+(~400ms) and its `logo` leads the big label. No art means the wallpaper, as
+before.
 
 ### Icons: local files, then the vendor host
 
