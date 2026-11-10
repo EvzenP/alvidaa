@@ -432,6 +432,26 @@
           this.toast = String(text);
           this.toastUntil = Date.now() + (typeof ms === "number" ? ms : 2500);
         },
+        // Where the focused input's art lives in the map. The TV reports the
+        // *name* of the device on a port but never per-source art, so config
+        // keys are lowercased source names ("hdmi2") — match on more than
+        // sourceId: the id first (build-time maps may still key by id), then
+        // the port label the config keys are derived from, then the resolved
+        // display name for people who key by "playstation 5".
+        inputArtFor: function (input) {
+          var artMap = root.AlvidaaNativeInputArt;
+          if (!input || !artMap) return "";
+          var raw = artMap[String(input.sourceId)];
+          if (raw == null) {
+            var port = text(input.name).toLowerCase();
+            if (port && artMap[port] != null) raw = artMap[port];
+          }
+          if (raw == null) {
+            var display = text(this.sourceName(input)).toLowerCase();
+            if (display && artMap[display] != null) raw = artMap[display];
+          }
+          return raw == null ? "" : raw;
+        },
         syncArt: function () {
           var artMap = root.AlvidaaNativeInputArt;
           if (!artMap) {
@@ -445,7 +465,7 @@
           }
           var items = this.dockItems();
           var focusInput = items[this.dock];
-          var rawArt = focusInput && (artMap[focusInput.sourceId] || artMap[String(focusInput.sourceId)]);
+          var rawArt = this.inputArtFor(focusInput);
           var targetArt = allowedInputArt(rawArt);
           var targetId = focusInput ? String(focusInput.sourceId) : null;
 

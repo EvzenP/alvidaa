@@ -970,6 +970,58 @@ test('input art: fades the outgoing layer out when the next input has none confi
   v.stop();
 });
 
+test('input art: resolves by sourceId, lowercased source name, and lowercased display name', () => {
+  const f = setup(), v = f.instance;
+  // The TV reports names but never art, so a config-built map is keyed by
+  // lowercased source names; a build-time map may still key by sourceId.
+  f.root.AlvidaaNativeInputArt = {
+    0: 'data:image/png;base64,BYID',
+    hdmi2: 'data:image/png;base64,BYNAME',
+    'fire tv stick': 'data:image/png;base64,BYDISPLAY'
+  };
+  v.start();
+  // sources: 0/TV, HDMI2 (displayname2 "PlayStation 5"), HDMI3 (rename "Fire TV Stick")
+  assert.equal(v.inputArtFor(v.sources[0]), 'data:image/png;base64,BYID',
+    'sourceId resolution is unchanged and wins first');
+  v.sources[1].name = ' HDMI2 '; // the config keys are lowercased and trimmed
+  assert.equal(v.inputArtFor(v.sources[1]), 'data:image/png;base64,BYNAME',
+    'a map keyed like the bridge config ("hdmi2") matches the port label');
+  assert.equal(v.inputArtFor(v.sources[2]), 'data:image/png;base64,BYDISPLAY',
+    'the resolved display name is the third lookup');
+  // The display name honours a custom rename from the settings surface too.
+  v.prefs.customNames = { HDMI3: 'Rig' };
+  f.root.AlvidaaNativeInputArt = { rig: 'data:image/png;base64,BYCUSTOM' };
+  assert.equal(v.inputArtFor(v.sources[2]), 'data:image/png;base64,BYCUSTOM');
+  // End to end: the name-keyed map drives the rendered backdrop layer.
+  delete v.prefs.customNames;
+  f.root.AlvidaaNativeInputArt = { hdmi2: 'data:image/png;base64,BYNAME' };
+  v.dock = 1;
+  v.syncArt();
+  const flat = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  const incoming = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-art-layer'] === 'incoming');
+  assert.ok(incoming, 'the name-keyed art renders as the incoming backdrop');
+  assert.match(incoming.data.style.backgroundImage, /BYNAME/);
+  v.stop();
+});
+
+test('input art: a remote URL in the map is still refused and the wallpaper is used', () => {
+  const f = setup(), v = f.instance;
+  f.root.AlvidaaNativeInputArt = { hdmi3: 'https://evil.com/art.png' };
+  v.start();
+  assert.equal(v.inputArtFor(v.sources[2]), 'https://evil.com/art.png',
+    'the lookup itself is not the policy');
+  v.dock = 2;
+  v.syncArt();
+  const flat = flatten(f.component.render.call(v, (tag, data, children) => ({ tag, data, children })));
+  const leaked = flat.filter(n => n.data && n.data.style &&
+    n.data.style.backgroundImage && n.data.style.backgroundImage.includes('evil.com'));
+  assert.equal(leaked.length, 0, 'allowedInputArt still refuses the remote URL: no art layer');
+  const wall = flat.some(n => n.data && n.data.style && n.data.style.backgroundImage &&
+    n.data.style.backgroundImage.indexOf('linear-gradient(180deg, rgba(56,189,248') === 0);
+  assert.ok(wall, 'the wallpaper fallback is what renders instead');
+  v.stop();
+});
+
 test('build script embeds AlvidaaNativeInputArt when present and works unchanged when absent', () => {
   const { build } = require('./build-native-alvidaa.cjs');
   const os = require('node:os');
