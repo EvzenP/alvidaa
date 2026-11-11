@@ -331,7 +331,7 @@
           if (custom && typeof custom === "object") {
             var sid = input.sourceId != null ? String(input.sourceId) : "";
             if (sid && text(custom[sid])) return text(custom[sid]);
-            var keys = [input.name, input.displayname2, input.rename];
+            var keys = [input.name, input.deviceName, input.displayname2, input.rename];
             for (var k = 0; k < keys.length; k++) {
               var val = text(keys[k]);
               if (!val) continue;
@@ -339,10 +339,14 @@
               if (text(custom[val])) return text(custom[val]);
             }
           }
-          // Same order as the bridge: the device the TV discovered on the port
-          // beats the port label, and a translation id is resolved last.
-          var label = text(input.displayname2) || text(input.rename) || text(input.name) ||
-            String(input.sourceId);
+          // Same order as the bridge, but the field names differ by transport:
+          // the vendor JS SDK (all-inputs.getAllInputsData) reports the device
+          // as `deviceName`, while the MQTT sourcelist the bridge reads calls it
+          // `displayname2`. Missing `deviceName` was why HDMI3 still read "HDMI3"
+          // on the native Home while the canvas lane showed "Fire TV Stick"
+          // (2026-11-10). Accept both.
+          var label = text(input.deviceName) || text(input.displayname2) ||
+            text(input.rename) || text(input.name) || String(input.sourceId);
           if (/^[A-Z]{2,4}[0-9]{4,}$/.test(label) && sdk.i18n && sdk.i18n.t) {
             try {
               var translated = sdk.i18n.t(label);
@@ -460,10 +464,20 @@
             }
           }
           if (raw != null) return raw;
-          // Nothing configured for this input: fall back to the bundled
-          // silhouettes, which match on the name the TV reports so a dock works
-          // with no configuration at all (issue #60). The build ships rules and
-          // icons, not a map of this TV's ports, because it cannot know them.
+          // Background art is config-only. The bundled silhouettes are tile art
+          // and must not be painted as a full-screen backdrop (they were, on
+          // 2026-11-10: a 24px icon stretched across 1080p reads as nothing).
+          return "";
+        },
+        // The art that goes *on* the tile: the TV's own per-source icon when the
+        // SDK supplies one, otherwise the bundled silhouette matched by the name
+        // the TV reports. Never a network fetch beyond the icon allowlist.
+        tileArtFor: function (input) {
+          if (!input) return "";
+          var fromTv = allowedIcon(unwrap(input.icon));
+          if (fromTv) {
+            return fromTv.indexOf("var/local/storeAppIcon/") === 0 ? "file:///hisenseUI/" + fromTv : fromTv;
+          }
           return this.deviceArtFor(this.sourceName(input));
         },
         deviceArtFor: function (name) {
@@ -480,7 +494,7 @@
         },
         syncArt: function () {
           var artMap = root.AlvidaaNativeInputArt;
-          if (!artMap && !root.AlvidaaNativeDeviceArt) {
+          if (!artMap) {
             this.activeArt = "";
             this.activeArtId = null;
             this.outgoingArt = "";
@@ -1046,7 +1060,16 @@
               color: focused ? "#ffffff" : "rgba(148,163,184,0.7)"
             }) }, [String(i + 1)]));
           }
-          if (text(input.glyph)) {
+          var tileArt = this.tileArtFor(input);
+          if (tileArt) {
+            tile.push(h("img", {
+              attrs: { src: tileArt, alt: "" },
+              style: box((DOCK_SIZE - 56) / 2, 40, 56, 56, {
+                objectFit: "contain",
+                opacity: focused ? 1 : 0.72
+              })
+            }));
+          } else if (text(input.glyph)) {
             tile.push(h("div", { style: box(0, 42, DOCK_SIZE, 60, {
               fontSize: 52, lineHeight: 60, textAlign: "center",
               color: focused ? "#ffffff" : "#cbd5e1"

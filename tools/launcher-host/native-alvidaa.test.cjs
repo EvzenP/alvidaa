@@ -1380,3 +1380,58 @@ test('settings: announce speaks the focused row and keyboard cell', () => {
   assert.equal(spoken[3], 'A', 'keyboard cells speak their character');
   v.stop();
 });
+
+test('input names prefer the SDK deviceName, then the MQTT displayname2', () => {
+  const f = setup(), v = f.instance;
+  f.component.mounted.call(v);
+  // The vendor JS SDK (all-inputs.getAllInputsData) reports `deviceName`; the
+  // MQTT sourcelist the bridge reads calls the same thing `displayname2`. The
+  // native lane only ever sees the SDK, so deviceName must win — without it
+  // HDMI3 read "HDMI3" while the canvas lane read "Fire TV Stick".
+  assert.equal(v.sourceName({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick' }), 'Fire TV Stick');
+  assert.equal(v.sourceName({ sourceId: 'HDMI2', name: 'HDMI2', displayname2: 'PlayStation 5' }), 'PlayStation 5');
+  assert.equal(v.sourceName({ sourceId: 'X', name: 'X', deviceName: 'Switch', displayname2: 'Other' }), 'Switch');
+  // A custom name still beats both.
+  v.prefs.customNames = { hdmi3: 'Stick' };
+  assert.equal(v.sourceName({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick' }), 'Stick');
+});
+
+test('the dock tile renders the device silhouette, and never as a background', () => {
+  const f = setup(), v = f.instance;
+  f.root.AlvidaaNativeDeviceArt = {
+    rules: [['(fire tv|cast)', 'cast'], ['(switch|playstation)', 'gamepad-2']],
+    icons: {
+      cast: 'data:image/svg+xml;base64,CAST',
+      'gamepad-2': 'data:image/svg+xml;base64,PAD',
+      box: 'data:image/svg+xml;base64,BOX'
+    },
+    fallback: 'box'
+  };
+  f.component.mounted.call(v);
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const flat = flatten(draw());
+  const imgs = flat.filter(n => n.tag === 'img');
+  assert.ok(imgs.some(n => n.data.attrs.src === 'data:image/svg+xml;base64,CAST'),
+    'the Fire TV input gets the cast silhouette on its tile');
+  assert.ok(imgs.some(n => n.data.attrs.src === 'data:image/svg+xml;base64,PAD'),
+    'the PlayStation input gets the gamepad silhouette');
+  // The silhouettes are tile art: a 24px icon stretched over 1080p reads as
+  // nothing, which is exactly what the first build did.
+  assert.ok(!flat.some(n => n.data && n.data.attrs && n.data.attrs['data-art-layer']),
+    'no silhouette is painted as a full-screen background layer');
+});
+
+test('a per-source icon from the TV wins over the silhouette when it is allowed', () => {
+  const f = setup(), v = f.instance;
+  f.root.AlvidaaNativeDeviceArt = {
+    rules: [['(fire tv|cast)', 'cast']],
+    icons: { cast: 'data:image/svg+xml;base64,CAST', box: 'data:image/svg+xml;base64,BOX' },
+    fallback: 'box'
+  };
+  f.component.mounted.call(v);
+  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
+    icon: 'var/local/storeAppIcon/stick.png' }), 'file:///hisenseUI/var/local/storeAppIcon/stick.png');
+  // A remote icon is refused by the allowlist, so the silhouette is used.
+  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
+    icon: 'https://evil.example/x.png' }), 'data:image/svg+xml;base64,CAST');
+});
