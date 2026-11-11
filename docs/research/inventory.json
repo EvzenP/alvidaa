@@ -555,6 +555,30 @@
         "root": "fetcher.fetchFile → superwatch 83/82 → vendor opkg postinst as uid 0 (CapEff 0000003fffffffff); patched static ARM32 Dropbear with key + owner password on :22; boot-persistent via the re_sshd serviceList autostart (ARMED ~30 s after each of four cold boots).",
         "launcher": "Native lane 3: the Free My TV component swap in the writable operation-ui app.js, with the owner allowlist (YouTube / Stremio Lite / TV Browser) and the merged inputs shelf; rendered on screen and survived a cold boot. Bridge lanes 1/2 (pairing + home watcher) were not exercised."
       }
+    },
+    {
+      "id": "V0000.09.09M.P1124",
+      "model": "50C350LS (Toshiba OEM, brand=tos)",
+      "region": "SA/Brazil",
+      "soc": "MTK9602",
+      "vidaa_os": "U09.09",
+      "transport_protocol": "3290",
+      "browser": "Chromium 111 \"odin\"",
+      "build_date": "unknown",
+      "tested_by": [
+        "gh:lobobg8-hub"
+      ],
+      "capabilities": {
+        "pairing": "working",
+        "launcher": "untested",
+        "file_bridge_traversal": "open",
+        "file_bridge_write": "open",
+        "identity_gate": "n-a",
+        "euladpp_untar": "untested",
+        "devtools_forge": "untested",
+        "root": "achieved",
+        "notes": "Toshiba OEM (brand=tos). Pairing requires brand=tos; alvidaa pair.py hardcodes 'his' and fails with rc=135 - pyvidaa pairs successfully. Fetcher is a service (CHA/services/fetcher/index.js), not a function; sw2.js must be written manually to CHA/functions/fetch/sw2.js. Superwatch install command 53 confirmed. postinst runs as root (EACCES on /tmp/ipk_proof.txt proves root-owned file; chmod 644 on /APPS/ipk_proof.txt confirms). id binary absent on firmware. /etc/rc.local, /var/local/otaTest.sh and jsservice.system do not exist."
+      }
     }
   ]
 }
