@@ -1410,11 +1410,16 @@ test('the dock tile renders the device silhouette, and never as a background', (
   f.component.mounted.call(v);
   const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
   const flat = flatten(draw());
-  const imgs = flat.filter(n => n.tag === 'img');
-  assert.ok(imgs.some(n => n.data.attrs.src === 'data:image/svg+xml;base64,CAST'),
+  // Painted as a background-image: an SVG data URI in an <img> did not paint on
+  // the reference engine, while the wallpaper's data URI in background-image
+  // always has.
+  const painted = flat.filter(n => n.data && n.data.style && /url\(/.test(String(n.data.style.backgroundImage || '')));
+  assert.ok(painted.some(n => /base64,CAST/.test(n.data.style.backgroundImage)),
     'the Fire TV input gets the cast silhouette on its tile');
-  assert.ok(imgs.some(n => n.data.attrs.src === 'data:image/svg+xml;base64,PAD'),
+  assert.ok(painted.some(n => /base64,PAD/.test(n.data.style.backgroundImage)),
     'the PlayStation input gets the gamepad silhouette');
+  assert.equal(flat.filter(n => n.tag === 'img').length, 0,
+    'no <img> is used for tile art on this engine');
   // The silhouettes are tile art: a 24px icon stretched over 1080p reads as
   // nothing, which is exactly what the first build did.
   assert.ok(!flat.some(n => n.data && n.data.attrs && n.data.attrs['data-art-layer']),

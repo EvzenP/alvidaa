@@ -1033,6 +1033,18 @@
         }
 
         nodes.push(label(112, 812, 22, "INPUTS & SOURCES", "#64748b", 600));
+        // TEMPORARY DIAGNOSTIC (2026-11-10): the dock shows a name but no icon,
+        // and there is no DevTools on this build, so the values have to be read
+        // off the screen. Remove once the art path is confirmed.
+        if (this.zone === "dock" && this.dockItems()[this.dock]) {
+          var diagInput = this.dockItems()[this.dock];
+          var diagArt = this.tileArtFor(diagInput);
+          nodes.push(label(112, 776, 18,
+            "DIAG w=" + this.width + " art=" + (diagArt ? String(diagArt).slice(0, 14) : "NONE") +
+            " | icon=" + (text(diagInput.icon) ? String(diagInput.icon).slice(0, 18) : "none") +
+            " | map=" + (root.AlvidaaNativeDeviceArt ? "yes" : "NO"),
+            "#fbbf24", 500));
+        }
 
         var dock = this.dockItems(), start = this.dockStart();
         var end = Math.min(dock.length, start + DOCK_PAGE);
@@ -1068,12 +1080,35 @@
               color: focused ? "#ffffff" : "rgba(148,163,184,0.7)"
             }) }, [String(i + 1)]));
           }
-          var tileArt = this.tileArtFor(input);
-          if (tileArt) {
-            tile.push(h("img", {
-              attrs: { src: tileArt, alt: "" },
+          // The TV's own icon for an input is a class name from the vendor icon
+          // font ("v-op-ic-videoplay"), not a URL — the stock launcher renders
+          // it as an <i>. That font is already loaded on this page, and it is
+          // the one icon mechanism this engine is known to paint: SVG data URIs
+          // did not paint here in either an <img> or a background-image
+          // (2026-11-10), while the wallpaper's PNG data URI always has.
+          var iconClass = /^v-op-ic-[a-z0-9-]+$/i.test(text(input.icon)) ? "v-icon-op " + text(input.icon) : "";
+          var tileArt = iconClass ? "" : this.tileArtFor(input);
+          if (iconClass) {
+            tile.push(h("i", {
+              attrs: { class: iconClass, "aria-hidden": "true" },
+              style: box(0, 34, DOCK_SIZE, 64, {
+                fontSize: 52, lineHeight: "64px", textAlign: "center",
+                fontStyle: "normal",
+                color: focused ? "#ffffff" : "#94a3b8"
+              })
+            }));
+          } else if (tileArt) {
+            // Painted as a background-image, not an <img>: this engine refused
+            // to paint an SVG data URI in an <img> (2026-11-10, art= present,
+            // map=yes, nothing on screen) while the generated wallpaper — a
+            // data URI in background-image — has always painted. Use the
+            // mechanism the engine has already proven.
+            tile.push(h("div", {
               style: box((DOCK_SIZE - 56) / 2, 40, 56, 56, {
-                objectFit: "contain",
+                backgroundImage: "url(" + JSON.stringify(tileArt) + ")",
+                backgroundSize: "contain",
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
                 opacity: focused ? 1 : 0.72
               })
             }));
@@ -1259,21 +1294,27 @@
 
         // ---- the app list overlay -----------------------------------------
         if (this.overlay) {
-          var panelX = 64, panelY = 140, panelW = 1792, panelH = 800;
+          // Children below are positioned relative to the PANEL, not the screen:
+  // box() always emits position:absolute, so the panel is their containing
+  // block. Adding panelX/panelY to a child double-counts the offset and pushes
+  // the grid right and down — the app list sat off-centre with its last row at
+  // y=1056 on a 1080 screen (2026-11-10). The settings layer already uses
+  // panel-relative coordinates, which is why it never showed this.
+  var panelX = 64, panelY = 140, panelW = 1792, panelH = 800;
           var rows = Math.max(1, Math.floor((panelH - 96) / OVERLAY_CELL));
           var firstRow = Math.max(0, Math.floor(this.overlayIndex / OVERLAY_COLS) - rows + 1);
           var first = firstRow * OVERLAY_COLS;
           var cellW = (panelW - 112) / OVERLAY_COLS;
           var panel = [
-            h("div", { style: box(panelX + 56, panelY + 40, null, null, {
+            h("div", { style: box(56, 40, null, null, {
               fontSize: 22, lineHeight: 24, fontWeight: "600", color: "#64748b"
             }) }, ["APPS"]),
-            h("div", { style: box(panelX + 56, panelY + 40, panelW - 112, 24, {
+            h("div", { style: box(56, 40, panelW - 112, 24, {
               fontSize: 18, lineHeight: 24, textAlign: "right", color: "#475569"
             }) }, ["OK to open \u00b7 BACK to close"])
           ];
           if (!this.apps.length) {
-            panel.push(h("div", { style: box(panelX + 56, panelY + 112, null, null, {
+            panel.push(h("div", { style: box(56, 112, null, null, {
               fontSize: 28, lineHeight: 32, color: "#475569"
             }) }, ["no apps reported"]));
           }
@@ -1282,8 +1323,8 @@
             if (row >= rows) break;
             var app = this.apps[a];
             var selected = this.overlayIndex === a;
-            var cellX = panelX + 56 + col * cellW;
-            var cellY = panelY + 96 + row * OVERLAY_CELL;
+            var cellX = 56 + col * cellW;
+            var cellY = 96 + row * OVERLAY_CELL;
             var icon = this.appIcon(app);
             var cell = [];
             if (icon) {
