@@ -469,14 +469,22 @@
           // 2026-11-10: a 24px icon stretched across 1080p reads as nothing).
           return "";
         },
-        // The art that goes *on* the tile: the TV's own per-source icon when the
-        // SDK supplies one, otherwise the bundled silhouette matched by the name
-        // the TV reports. Never a network fetch beyond the icon allowlist.
+        // The art that goes *on* the tile: the TV's own per-source icon when it
+        // is a form we know loads, otherwise the bundled silhouette matched by
+        // the name the TV reports.
         tileArtFor: function (input) {
           if (!input) return "";
-          var fromTv = allowedIcon(unwrap(input.icon));
-          if (fromTv) {
-            return fromTv.indexOf("var/local/storeAppIcon/") === 0 ? "file:///hisenseUI/" + fromTv : fromTv;
+          var tvIcon = String(unwrap(input.icon) || "");
+          // The SDK's input icon is a vendor route ("/icon/284"), which the
+          // general allowlist accepts as an absolute path but which resolves
+          // against this bundle's own origin (file:///hisenseUI/...) and 404s.
+          // An <img> that never paints is worse than no icon at all, so for
+          // input art only take the two forms we know load: an inline data URI,
+          // or the vendor icon host. Everything else falls through to the
+          // silhouette, which always paints.
+          if (/^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(tvIcon) ||
+              /^https:\/\/([a-z0-9-]+\.)*vidaahub\.com\//i.test(tvIcon)) {
+            return tvIcon;
           }
           return this.deviceArtFor(this.sourceName(input));
         },

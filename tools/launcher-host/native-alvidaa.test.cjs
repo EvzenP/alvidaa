@@ -1429,9 +1429,19 @@ test('a per-source icon from the TV wins over the silhouette when it is allowed'
     fallback: 'box'
   };
   f.component.mounted.call(v);
+  // A vendor route ("/icon/284") passes the general allowlist but resolves
+  // against this bundle's own origin and 404s, which is exactly how the dock
+  // ended up with a label and no icon on 2026-11-10. It must fall back.
   assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: 'var/local/storeAppIcon/stick.png' }), 'file:///hisenseUI/var/local/storeAppIcon/stick.png');
-  // A remote icon is refused by the allowlist, so the silhouette is used.
+    icon: '/icon/284' }), 'data:image/svg+xml;base64,CAST');
+  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
+    icon: 'var/local/storeAppIcon/stick.png' }), 'data:image/svg+xml;base64,CAST');
+  // The two forms that are known to load are used as-is.
+  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
+    icon: 'data:image/png;base64,AAAA' }), 'data:image/png;base64,AAAA');
+  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
+    icon: 'https://cdn.vidaahub.com/x.png' }), 'https://cdn.vidaahub.com/x.png');
+  // A remote icon outside the vendor host is refused, so the silhouette is used.
   assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
     icon: 'https://evil.example/x.png' }), 'data:image/svg+xml;base64,CAST');
 });
