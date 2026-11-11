@@ -1396,57 +1396,28 @@ test('input names prefer the SDK deviceName, then the MQTT displayname2', () => 
   assert.equal(v.sourceName({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick' }), 'Stick');
 });
 
-test('the dock tile renders the device silhouette, and never as a background', () => {
+test('the dock tile draws the device icon as shapes, not as an image', () => {
   const f = setup(), v = f.instance;
   f.root.AlvidaaNativeDeviceArt = {
     rules: [['(fire tv|cast)', 'cast'], ['(switch|playstation)', 'gamepad-2']],
-    icons: {
-      cast: 'data:image/svg+xml;base64,CAST',
-      'gamepad-2': 'data:image/svg+xml;base64,PAD',
-      box: 'data:image/svg+xml;base64,BOX'
-    },
+    icons: { cast: 'data:image/svg+xml;base64,CAST', 'gamepad-2': 'data:image/svg+xml;base64,PAD',
+      box: 'data:image/svg+xml;base64,BOX' },
     fallback: 'box'
   };
   f.component.mounted.call(v);
   const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
   const flat = flatten(draw());
-  // Painted as a background-image: an SVG data URI in an <img> did not paint on
-  // the reference engine, while the wallpaper's data URI in background-image
-  // always has.
-  const painted = flat.filter(n => n.data && n.data.style && /url\(/.test(String(n.data.style.backgroundImage || '')));
-  assert.ok(painted.some(n => /base64,CAST/.test(n.data.style.backgroundImage)),
-    'the Fire TV input gets the cast silhouette on its tile');
-  assert.ok(painted.some(n => /base64,PAD/.test(n.data.style.backgroundImage)),
-    'the PlayStation input gets the gamepad silhouette');
-  assert.equal(flat.filter(n => n.tag === 'img').length, 0,
-    'no <img> is used for tile art on this engine');
-  // The silhouettes are tile art: a 24px icon stretched over 1080p reads as
-  // nothing, which is exactly what the first build did.
-  assert.ok(!flat.some(n => n.data && n.data.attrs && n.data.attrs['data-art-layer']),
-    'no silhouette is painted as a full-screen background layer');
+  // This engine paints neither an SVG data URI (img or background-image) nor the
+  // vendor icon-font class, so the icon has to be divs with borders/backgrounds.
+  assert.equal(flat.filter(n => n.tag === 'img').length, 0, 'no <img> is used for tile art');
+  assert.equal(flat.filter(n => n.data && n.data.style && /url\(/.test(String(n.data.style.backgroundImage || ''))).length, 0,
+    'no tile art is painted as a background-image');
+  const shapes = flat.filter(n => n.data && n.data.style && n.data.style.position === 'absolute' &&
+    (/(^|;|\s)border:/.test(String(n.data.style.border || '')) || n.data.style.backgroundColor));
+  assert.ok(shapes.length >= 6, 'the dock draws shape primitives for the inputs, got ' + shapes.length);
+  // The name still resolves, and the matcher is what picks the shape.
+  assert.equal(v.deviceArtName('Fire TV Stick'), 'cast');
+  assert.equal(v.deviceArtName('PlayStation 5'), 'gamepad-2');
+  assert.equal(v.deviceArtName('something unknown'), 'box');
 });
 
-test('a per-source icon from the TV wins over the silhouette when it is allowed', () => {
-  const f = setup(), v = f.instance;
-  f.root.AlvidaaNativeDeviceArt = {
-    rules: [['(fire tv|cast)', 'cast']],
-    icons: { cast: 'data:image/svg+xml;base64,CAST', box: 'data:image/svg+xml;base64,BOX' },
-    fallback: 'box'
-  };
-  f.component.mounted.call(v);
-  // A vendor route ("/icon/284") passes the general allowlist but resolves
-  // against this bundle's own origin and 404s, which is exactly how the dock
-  // ended up with a label and no icon on 2026-11-10. It must fall back.
-  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: '/icon/284' }), 'data:image/svg+xml;base64,CAST');
-  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: 'var/local/storeAppIcon/stick.png' }), 'data:image/svg+xml;base64,CAST');
-  // The two forms that are known to load are used as-is.
-  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: 'data:image/png;base64,AAAA' }), 'data:image/png;base64,AAAA');
-  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: 'https://cdn.vidaahub.com/x.png' }), 'https://cdn.vidaahub.com/x.png');
-  // A remote icon outside the vendor host is refused, so the silhouette is used.
-  assert.equal(v.tileArtFor({ sourceId: 'HDMI3', name: 'HDMI3', deviceName: 'Fire TV Stick',
-    icon: 'https://evil.example/x.png' }), 'data:image/svg+xml;base64,CAST');
-});

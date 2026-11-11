@@ -469,36 +469,17 @@
           // 2026-11-10: a 24px icon stretched across 1080p reads as nothing).
           return "";
         },
-        // The art that goes *on* the tile: the TV's own per-source icon when it
-        // is a form we know loads, otherwise the bundled silhouette matched by
-        // the name the TV reports.
-        tileArtFor: function (input) {
-          if (!input) return "";
-          var tvIcon = String(unwrap(input.icon) || "");
-          // The SDK's input icon is a vendor route ("/icon/284"), which the
-          // general allowlist accepts as an absolute path but which resolves
-          // against this bundle's own origin (file:///hisenseUI/...) and 404s.
-          // An <img> that never paints is worse than no icon at all, so for
-          // input art only take the two forms we know load: an inline data URI,
-          // or the vendor icon host. Everything else falls through to the
-          // silhouette, which always paints.
-          if (/^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(tvIcon) ||
-              /^https:\/\/([a-z0-9-]+\.)*vidaahub\.com\//i.test(tvIcon)) {
-            return tvIcon;
-          }
-          return this.deviceArtFor(this.sourceName(input));
-        },
-        deviceArtFor: function (name) {
+        deviceArtName: function (name) {
           var table = root.AlvidaaNativeDeviceArt;
           var label = text(name).toLowerCase();
-          if (!table || !table.icons || !label) return "";
-          var rules = table.rules || [];
+          if (!label) return "";
+          var rules = (table && table.rules) || [];
           for (var i = 0; i < rules.length; i++) {
             var pattern = null;
             try { pattern = new RegExp(rules[i][0], "i"); } catch (_) { pattern = null; }
-            if (pattern && pattern.test(label)) return table.icons[rules[i][1]] || "";
+            if (pattern && pattern.test(label)) return rules[i][1];
           }
-          return table.icons[table.fallback] || "";
+          return (table && table.fallback) || "";
         },
         syncArt: function () {
           var artMap = root.AlvidaaNativeInputArt;
@@ -1010,6 +991,72 @@
           }) }, [value]);
         }
 
+        // Device icons drawn as divs. This engine does not paint SVG data URIs
+        // in an <img> or a background-image, and the vendor icon-font class does
+        // not paint outside the vendor's own components (all three measured
+        // 2026-11-10/11 against the reference TV). What does paint is a div with
+        // a border or a background, which is how the fallback icon has always
+        // worked — so the silhouettes are shapes, not images.
+        function deviceShapes(icon, focused, size) {
+          var ink = focused ? "rgba(255,255,255,0.92)" : "rgba(148,163,184,0.75)";
+          var w = 3; // stroke, in 1920-space px
+          var out = [];
+          function rect(x, y, rw, rh, more) {
+            var style = { position: "absolute", left: x + "px", top: y + "px",
+              width: rw + "px", height: rh + "px", border: w + "px solid " + ink,
+              borderRadius: (more && more.r) || 3 + "px", boxSizing: "border-box" };
+            if (more && more.fill) { style.border = "none"; style.backgroundColor = ink; }
+            return style;
+          }
+          function bar(x, y, rw, rh) {
+            return { position: "absolute", left: x + "px", top: y + "px",
+              width: rw + "px", height: rh + "px", backgroundColor: ink, borderRadius: 2 + "px" };
+          }
+          var cx = size / 2;
+          if (icon === "gamepad-2") {
+            out.push({ position: "absolute", left: cx - 21 + "px", top: 16 + "px",
+              width: 42 + "px", height: 22 + "px", border: w + "px solid " + ink,
+              borderRadius: 11 + "px", boxSizing: "border-box" });
+            out.push(bar(cx - 13, 25, 8, 2));
+            out.push(bar(cx - 10, 22, 2, 8));
+            out.push({ position: "absolute", left: cx + 8 + "px", top: 24 + "px",
+              width: 5 + "px", height: 5 + "px", borderRadius: "50%", backgroundColor: ink });
+            out.push({ position: "absolute", left: cx + 14 + "px", top: 28 + "px",
+              width: 5 + "px", height: 5 + "px", borderRadius: "50%", backgroundColor: ink });
+          } else if (icon === "cast") {
+            out.push(rect(cx - 20, 14, 40, 27, { r: 4 + "px" }));
+            out.push({ position: "absolute", left: cx - 20 + "px", top: 30 + "px",
+              width: 9 + "px", height: 9 + "px", backgroundColor: ink, borderRadius: 2 + "px" });
+          } else if (icon === "tv") {
+            out.push(rect(cx - 20, 14, 40, 26, { r: 4 + "px" }));
+            out.push(bar(cx - 2, 40, 4, 7));
+            out.push(bar(cx - 11, 47, 22, 3));
+          } else if (icon === "monitor") {
+            out.push(rect(cx - 20, 13, 40, 24, { r: 3 + "px" }));
+            out.push(bar(cx - 2, 37, 4, 8));
+            out.push(bar(cx - 12, 45, 24, 3));
+          } else if (icon === "disc") {
+            out.push({ position: "absolute", left: cx - 17 + "px", top: 11 + "px",
+              width: 34 + "px", height: 34 + "px", border: w + "px solid " + ink,
+              borderRadius: "50%", boxSizing: "border-box" });
+            out.push({ position: "absolute", left: cx - 5 + "px", top: 23 + "px",
+              width: 10 + "px", height: 10 + "px", border: w + "px solid " + ink,
+              borderRadius: "50%", boxSizing: "border-box" });
+          } else if (icon === "usb") {
+            out.push(rect(cx - 8, 20, 16, 24, { r: 3 + "px" }));
+            out.push({ position: "absolute", left: cx - 4 + "px", top: 13 + "px",
+              width: 8 + "px", height: 7 + "px", backgroundColor: ink, borderRadius: 2 + "px" });
+            out.push(bar(cx - 4, 29, 8, 2));
+          } else if (icon === "cpu") {
+            out.push(rect(cx - 15, 15, 30, 26, { r: 3 + "px" }));
+            out.push(rect(cx - 7, 23, 14, 10, { r: 2 + "px" }));
+          } else {
+            out.push(rect(cx - 15, 16, 30, 24, { r: 4 + "px" }));
+            out.push(bar(cx - 15, 26, 30, 2));
+          }
+          return out.map(function (style) { return h("div", { style: style }); });
+        }
+
         var nodes = [];
 
         // ---- view 1: clock, big label, inputs dock -------------------------
@@ -1038,9 +1085,9 @@
         // off the screen. Remove once the art path is confirmed.
         if (this.zone === "dock" && this.dockItems()[this.dock]) {
           var diagInput = this.dockItems()[this.dock];
-          var diagArt = this.tileArtFor(diagInput);
+          var diagShape = this.deviceArtName(this.sourceName(diagInput));
           nodes.push(label(112, 776, 18,
-            "DIAG w=" + this.width + " art=" + (diagArt ? String(diagArt).slice(0, 14) : "NONE") +
+            "DIAG w=" + this.width + " shape=" + (diagShape || "NONE") +
             " | icon=" + (text(diagInput.icon) ? String(diagInput.icon).slice(0, 18) : "none") +
             " | map=" + (root.AlvidaaNativeDeviceArt ? "yes" : "NO"),
             "#fbbf24", 500));
@@ -1080,38 +1127,16 @@
               color: focused ? "#ffffff" : "rgba(148,163,184,0.7)"
             }) }, [String(i + 1)]));
           }
-          // The TV's own icon for an input is a class name from the vendor icon
-          // font ("v-op-ic-videoplay"), not a URL — the stock launcher renders
-          // it as an <i>. That font is already loaded on this page, and it is
-          // the one icon mechanism this engine is known to paint: SVG data URIs
-          // did not paint here in either an <img> or a background-image
-          // (2026-11-10), while the wallpaper's PNG data URI always has.
-          var iconClass = /^v-op-ic-[a-z0-9-]+$/i.test(text(input.icon)) ? "v-icon-op " + text(input.icon) : "";
-          var tileArt = iconClass ? "" : this.tileArtFor(input);
-          if (iconClass) {
-            tile.push(h("i", {
-              attrs: { class: iconClass, "aria-hidden": "true" },
-              style: box(0, 34, DOCK_SIZE, 64, {
-                fontSize: 52, lineHeight: "64px", textAlign: "center",
-                fontStyle: "normal",
-                color: focused ? "#ffffff" : "#94a3b8"
-              })
-            }));
-          } else if (tileArt) {
-            // Painted as a background-image, not an <img>: this engine refused
-            // to paint an SVG data URI in an <img> (2026-11-10, art= present,
-            // map=yes, nothing on screen) while the generated wallpaper — a
-            // data URI in background-image — has always painted. Use the
-            // mechanism the engine has already proven.
-            tile.push(h("div", {
-              style: box((DOCK_SIZE - 56) / 2, 40, 56, 56, {
-                backgroundImage: "url(" + JSON.stringify(tileArt) + ")",
-                backgroundSize: "contain",
-                backgroundPosition: "center",
-                backgroundRepeat: "no-repeat",
-                opacity: focused ? 1 : 0.72
-              })
-            }));
+          // Shapes, not images. Measured on the reference TV (2026-11-10/11):
+          // an SVG data URI does not paint in an <img> or a background-image,
+          // and the vendor icon-font class does not paint outside the vendor's
+          // own components. A div with a border or a background does paint, so
+          // the device icons are drawn. See deviceShapes().
+          var shapeName = this.deviceArtName(this.sourceName(input));
+          if (shapeName) {
+            tile.push(h("div", { style: box((DOCK_SIZE - 56) / 2, 40, 56, 56, {
+              opacity: focused ? 1 : 0.85
+            }) }, deviceShapes(shapeName, focused, 56)));
           } else if (text(input.glyph)) {
             tile.push(h("div", { style: box(0, 42, DOCK_SIZE, 60, {
               fontSize: 52, lineHeight: 60, textAlign: "center",
