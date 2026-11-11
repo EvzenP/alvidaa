@@ -64,4 +64,18 @@ function dataUriFor(name) {
   return 'data:image/svg+xml;base64,' + Buffer.from(art.svg, 'utf8').toString('base64');
 }
 
-module.exports = { artForName, dataUriFor, RULES, FALLBACK, ART_DIR };
+// The whole set as one build-time payload: the rules as regex sources and the
+// icons as inline data URIs. This is what makes the silhouettes work with no
+// configuration at all — the build does not need to know which inputs exist,
+// because the component applies the rules to the name the TV reports.
+function bundle() {
+  const icons = {};
+  const names = new Set(RULES.map(rule => rule[1]).concat([FALLBACK]));
+  for (const icon of names) {
+    icons[icon] = 'data:image/svg+xml;base64,' +
+      Buffer.from(svgFor(icon), 'utf8').toString('base64');
+  }
+  return { rules: RULES.map(rule => [rule[0].source, rule[1]]), icons, fallback: FALLBACK };
+}
+
+module.exports = { artForName, dataUriFor, bundle, RULES, FALLBACK, ART_DIR };

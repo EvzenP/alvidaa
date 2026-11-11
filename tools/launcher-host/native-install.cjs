@@ -531,8 +531,19 @@ function install(id, opts) {
   assert.ok(fs.existsSync(localStock),
     'no pinned stock bundle at ' + m.local_stock + '; run bootstrap first');
   const out = path.join(REPO, 'firmware', opts.model, 'candidate-' + v.id + '.js');
+  // The silhouettes ship as rules + icons so the dock has art even when the
+  // config names no inputs — which is the normal case, and the reason the first
+  // deploy of #60 baked none (2026-11-10).
+  const deviceArt = opts.noDeviceArt ? null : require('./device-art.cjs').bundle();
+  const buildOptions = {};
+  if (art.map && Object.keys(art.map).length) buildOptions.inputArt = art.map;
+  if (deviceArt) buildOptions.deviceArt = deviceArt;
   const candidate = builder.build(localStock, out, m.stock_sha256,
-    art.map && Object.keys(art.map).length ? { inputArt: art.map } : undefined);
+    Object.keys(buildOptions).length ? buildOptions : undefined);
+  if (deviceArt) {
+    console.log('device art: ' + Object.keys(deviceArt.icons).length + ' silhouettes, ' +
+      deviceArt.rules.length + ' name rules');
+  }
   console.log('built ' + v.name + ': ' + Buffer.byteLength(candidate) + ' bytes, sha256 ' + hash(candidate));
 
   if (!opts.dryRun) {

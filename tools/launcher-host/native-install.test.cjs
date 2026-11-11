@@ -552,7 +552,10 @@ test('input art: missing or unusable config never fails the install', t => {
     try {
       install('alvidaa', Object.assign({ ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder }, extra));
     } finally { console.log = original; }
-    assert.equal(seen, undefined, what + ': the builder got no art options');
+    // No config art is baked in any of these cases. The silhouette bundle is
+    // separate and always present unless --no-device-art, so assert on the
+    // config-art slot specifically.
+    assert.equal(seen && seen.inputArt, undefined, what + ': the builder got no config art');
     assert.ok(logs.some(l => pattern.test(l)), what + ': ' + logs.join(' | '));
     assert.ok(logs.some(l => l.includes('building without input art')), what);
     assert.ok(tv.files.has(STATE + '/candidate-native-home.js'), what + ': install still ran');
@@ -578,7 +581,8 @@ test('input art: --no-input-art skips the TV read, --input-art takes a local map
   const builderOff = stubBuildForWiring(t, (a, b, c, options) => { seenOff = options; });
   install('alvidaa', { ssh: tvOff.ssh, sleep: () => {}, model: '50a51huv',
     builder: builderOff, noInputArt: true });
-  assert.equal(seenOff, undefined);
+  assert.equal(seenOff && seenOff.inputArt, undefined,
+    '--no-input-art drops the config art; the silhouette bundle is --no-device-art');
 
   // --input-art <file>: a plain { key: art } map, remote entries dropped
   const dir = fs.mkdtempSync('/tmp/alvidaa-input-art-');
@@ -615,7 +619,8 @@ test('input art: --no-input-art skips the TV read, --input-art takes a local map
   const builderMissing = stubBuildForWiring(t, (a, b, c, options) => { seenMissing = options; });
   install('alvidaa', { ssh: tvMap.ssh, sleep: () => {}, model: '50a51huv',
     builder: builderMissing, inputArtFile: path.join(dir, 'nope.json') });
-  assert.equal(seenMissing, undefined);
+  assert.equal(seenMissing && seenMissing.inputArt, undefined,
+    'an unreadable --input-art file still leaves the silhouettes in place');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -714,7 +719,10 @@ test('device art: an input with no name gets no art and the install still succee
   try {
     install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder });
   } finally { console.log = original; }
-  assert.deepEqual(seen, { inputArt: { hdmi2: art.map.hdmi2 } });
+  assert.deepEqual(seen.inputArt, { hdmi2: art.map.hdmi2 },
+    'only the named input gets config art');
+  assert.ok(seen.deviceArt && seen.deviceArt.icons && seen.deviceArt.rules.length > 0,
+    'the silhouette bundle travels alongside it');
   assert.ok(logs.some(l => /input art: .*silhouette/.test(l)), logs.join(' | '));
   assert.ok(logs.some(l => l.includes('mode: install')), 'install completed');
 });

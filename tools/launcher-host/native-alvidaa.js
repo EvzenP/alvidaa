@@ -445,22 +445,42 @@
         // the port label the config keys are derived from, then the resolved
         // display name for people who key by "playstation 5".
         inputArtFor: function (input) {
+          if (!input) return "";
           var artMap = root.AlvidaaNativeInputArt;
-          if (!input || !artMap) return "";
-          var raw = artMap[String(input.sourceId)];
-          if (raw == null) {
-            var port = text(input.name).toLowerCase();
-            if (port && artMap[port] != null) raw = artMap[port];
+          var raw = null;
+          if (artMap) {
+            raw = artMap[String(input.sourceId)];
+            if (raw == null) {
+              var port = text(input.name).toLowerCase();
+              if (port) raw = artMap[port];
+            }
+            if (raw == null) {
+              var display = text(this.sourceName(input)).toLowerCase();
+              if (display) raw = artMap[display];
+            }
           }
-          if (raw == null) {
-            var display = text(this.sourceName(input)).toLowerCase();
-            if (display && artMap[display] != null) raw = artMap[display];
+          if (raw != null) return raw;
+          // Nothing configured for this input: fall back to the bundled
+          // silhouettes, which match on the name the TV reports so a dock works
+          // with no configuration at all (issue #60). The build ships rules and
+          // icons, not a map of this TV's ports, because it cannot know them.
+          return this.deviceArtFor(this.sourceName(input));
+        },
+        deviceArtFor: function (name) {
+          var table = root.AlvidaaNativeDeviceArt;
+          var label = text(name).toLowerCase();
+          if (!table || !table.icons || !label) return "";
+          var rules = table.rules || [];
+          for (var i = 0; i < rules.length; i++) {
+            var pattern = null;
+            try { pattern = new RegExp(rules[i][0], "i"); } catch (_) { pattern = null; }
+            if (pattern && pattern.test(label)) return table.icons[rules[i][1]] || "";
           }
-          return raw == null ? "" : raw;
+          return table.icons[table.fallback] || "";
         },
         syncArt: function () {
           var artMap = root.AlvidaaNativeInputArt;
-          if (!artMap) {
+          if (!artMap && !root.AlvidaaNativeDeviceArt) {
             this.activeArt = "";
             this.activeArtId = null;
             this.outgoingArt = "";
