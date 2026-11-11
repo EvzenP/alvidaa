@@ -1080,19 +1080,6 @@
         }
 
         nodes.push(label(112, 812, 22, "INPUTS & SOURCES", "#64748b", 600));
-        // TEMPORARY DIAGNOSTIC (2026-11-10): the dock shows a name but no icon,
-        // and there is no DevTools on this build, so the values have to be read
-        // off the screen. Remove once the art path is confirmed.
-        if (this.zone === "dock" && this.dockItems()[this.dock]) {
-          var diagInput = this.dockItems()[this.dock];
-          var diagShape = this.deviceArtName(this.sourceName(diagInput));
-          nodes.push(label(112, 776, 18,
-            "DIAG w=" + this.width + " shape=" + (diagShape || "NONE") +
-            " | icon=" + (text(diagInput.icon) ? String(diagInput.icon).slice(0, 18) : "none") +
-            " | map=" + (root.AlvidaaNativeDeviceArt ? "yes" : "NO"),
-            "#fbbf24", 500));
-        }
-
         var dock = this.dockItems(), start = this.dockStart();
         var end = Math.min(dock.length, start + DOCK_PAGE);
         if (!dock.length) {

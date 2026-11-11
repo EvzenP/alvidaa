@@ -81,77 +81,49 @@ When opt-in preference `alvidaa_auto_switch` is enabled in `sdk.storage` (defaul
 - If no inputs or multiple inputs have signal, or if `alvidaa_auto_switch` is false, no countdown starts.
 - The countdown cancels immediately on `stop()`.
 
-### Per-input wallpaper art
+### Input art: shapes, not images
 
-The TV reports the *name* of the device on a port (`displayname2` -> "PlayStation
-5") but never per-source art, so every image comes from config or is generated.
-The pipeline is config -> build -> global:
+Each input gets a device icon matched from the name the TV reports. The icons are
+**drawn as divs** (rects, bars, circles), not loaded as images, because this
+engine does not paint the image forms that would otherwise be obvious:
 
-1. **Config.** The bridge's `/var/local/alvidaa/config.json` carries an
-   `inputs` map keyed by source name (`"hdmi2"`); each entry has `bg` (a
-   backdrop wallpaper) and `logo` (a tile image), both local paths — this is
-   `bridge/config.go`, passed through to clients as `bg`/`logo` on every source
-   by `bridge/state.go`.
-2. **Build.** `native-install.cjs` reads that config over the SSH lane and
-   bakes `{ <lowercased key>: <art> }` into the candidate via the builder's
-   `options.inputArt`, which lands as `self.AlvidaaNativeInputArt`. The native
-   component's single art slot is the backdrop, so a config entry's `bg` fills
-   it (a `logo` is tile art for the canvas page; the canvas renders it there).
-   Missing config, no `inputs` section, an unreadable file or zero usable
-   entries all mean "build without art" — one line says which, and the install
-   succeeds. `--no-input-art` skips the read; `--input-art <file.json>` takes a
-   local map (or a saved bridge config) when the TV is unreachable; `--dry-run`
-   says what would be baked. A remote URL is dropped with a warning naming the
-   input.
-3. **Device-class silhouettes fill the gaps** (`device-art.cjs`, issue #60).
-   The TV's *names* are free, so for every input with no configured backdrop
-   the installer bakes a class silhouette keyed by the name the TV reports:
-   the config entry's `name` when it has one, else the port label itself.
-   Config art always wins — an owner who supplies a real image keeps it — and
-   `--no-device-art` skips the matcher. A configured-but-remote URL is refused
-   with its warning and is deliberately *not* masked by a silhouette.
-   **Decision: silhouettes, not brand renders.** The owner's reference photo
-   shows photographic product renders; we deliberately do not ship that.
-   Vendor marketing photography is not ours to license and per-device renders
-   are a minefield; the launcher is minimal dark-glass line art, which a
-   photographic render would fight; and a silhouette per device *class* is
-   reusable across brands with no per-device asset. The icons are vendored
-   Lucide (ISC; `cast`/`monitor`/`tv` are Feather-derived, MIT — attribution
-   and the verbatim licence text live in `tools/launcher-host/input-art/`),
-   with `#94a3b8` baked in (6.73:1 contrast on the normal tile, 5.63:1 on the
-   focused tile — checked, not guessed). The match runs most specific intent
-   first: controllers (`nintendo|switch|playstation|ps4|ps5|xbox|gamepad|
-   controller` -> gamepad-2), streaming (`apple tv|appletv|chromecast|fire tv|
-   fire stick|roku|streaming` -> cast), computers (`steam|mini pc|desktop|
-   computer|pc` -> cpu), discs (`blu-?ray|dvd|disc|player`), sticks
-   (`usb|stick|dongle` -> usb), displays (`monitor|display`), the tuner
-   (`tv|television|antenna|cable|satellite|tuner` -> tv), and everything else
-   -> box. "fire tv" and "apple tv" hit cast before the bare `tv` keyword —
-   that ordering is pinned by tests because it is the one that breaks.
-4. **Component.** `syncArt()` resolves the focused input through
-   `inputArtFor()`: the `sourceId` first (a build-time map may still key by
-   id), then the lowercased, trimmed port label (`name`) — that is what the
-   config keys are derived from — then the lowercased resolved display name,
-   so keying by "playstation 5" also works, custom renames included.
+| Mechanism | Paints? |
+| --- | --- |
+| SVG data URI in an `<img>` | no |
+| the same SVG in `background-image` | no |
+| the vendor icon-font class the SDK reports | no, outside the vendor's components |
+| a PNG data URI in `background-image` | yes (the wallpaper) |
+| a `div` with a border or background | yes |
 
-The same refusal rules as everywhere else apply at render time:
-`allowedInputArt()` accepts local files only (`var/local/storeAppIcon/...`,
-`file:///...`, absolute paths) and inline data URIs
-(`data:image/(png|jpeg|webp|svg+xml);base64,...`). The `svg+xml` form is here
-for the silhouettes: an SVG rendered in an `<img>` or a `background-image`
-cannot execute script, the URI is still local (nothing is fetched), and it is
-~700 bytes against a raster's kilobytes; only the base64 form is accepted, not
-an unencoded `data:image/svg+xml,` URL. A remote URL — including
-`vidaahub.com` — never renders, so a refused value means the wallpaper, not a
-network fetch. When the global is absent the whole layer is omitted. Focused
-art cross-fades over 300ms via two stacked layers (incoming 0->1, outgoing
-1->0); moving to an input without art fades the outgoing layer out, so the
-wallpaper arrives as a cross-fade rather than a cut.
+Measured 2026-11-11; the full table and the two related traps are in
+[findings 13 §8](../../docs/models/50A51HUV/09.01O.P0813/findings/13-native-home.md).
 
-The canvas page (lane 1) renders the same `bg`/`logo` payload fields directly
-from the bridge: the focused input's `bg` cross-fades over the date wallpaper
-(~400ms) and its `logo` leads the big label. No art means the wallpaper, as
-before.
+Matching is by the reported name, most specific first, so `Fire TV` and
+`Apple TV` reach the cast icon before the bare `tv` rule does:
+
+| Name matches | Icon |
+| --- | --- |
+| nintendo, switch, playstation, ps4, ps5, xbox, gamepad, controller | controller |
+| apple tv, chromecast, fire tv, fire stick, roku, streaming | cast |
+| steam, mini pc, desktop, computer, pc | cpu |
+| blu-ray, dvd, disc, player | disc |
+| usb, stick, dongle | usb |
+| monitor, display | monitor |
+| tv, television, antenna, cable, satellite, tuner | tv |
+| anything else | box |
+
+Two facts that cost a day to learn:
+
+- **The TV reports the name, and the field name depends on the transport.** The
+  vendor JS SDK (`all-inputs.getAllInputsData`) calls it `deviceName`; the MQTT
+  sourcelist the bridge reads calls it `displayname2`. The native lane only sees
+  the SDK.
+- **The SDK's per-source `icon` is an icon-font class name** (`v-op-ic-videoplay`),
+  not a URL. It does not paint from an injected component, so it is not used.
+
+A configured `bg`/`logo` in `config.inputs` still wins where it exists, and is
+baked into the candidate at build time by `native-install.cjs`; it is the only
+path that puts a real photograph or wallpaper behind an input.
 
 ### Icons: local files, then the vendor host
 
