@@ -517,6 +517,15 @@ function readInputArt(opts) {
 // blocks an install, and a failed verification reports the TV's real state
 // rather than pretending the switch did not happen.
 
+// Every path this installer is about to write is checked against the checked-in
+// refusal list first. A match is a refusal, not a warning (issue #53).
+function assertTouchesAllowed(m) {
+  const { assertSafe } = require('./never-touch.cjs');
+  for (const target of [m.app, m.state, m.state + '/backup', m.state + '/candidate-native-home.js']) {
+    assertSafe(target);
+  }
+}
+
 function recordBefore(opts, m, what) {
   if (opts.dryRun || opts.noRecord) return null;
   try {
@@ -601,7 +610,9 @@ function install(id, opts) {
   }
   console.log('built ' + v.name + ': ' + Buffer.byteLength(candidate) + ' bytes, sha256 ' + hash(candidate));
 
-  // Before the first byte lands on the TV: capture the pristine state.
+  // Before the first byte lands on the TV: refuse a forbidden path, then capture
+  // the pristine state.
+  assertTouchesAllowed(m);
   recordBefore(opts, m, 'install');
 
   if (!opts.dryRun) {
@@ -627,6 +638,7 @@ function install(id, opts) {
 
 function rollback(opts) {
   const m = model(opts.model);
+  assertTouchesAllowed(m);
   const previousPid = previousEnginePid(opts, m);
   runSwitch(opts, m, 'rollback');
   console.log('stock restored on ' + m.name);
@@ -653,6 +665,19 @@ function status(opts) {
     return;
   }
   console.log('watcher: ' + watcherStatus(opts, m));
+  if (opts.noDrift) return;
+  // "What came back": compare live state against the recovery record. Read-only,
+  // and it never changes the exit code of status — it reports, the operator
+  // decides.
+  try {
+    const { runDriftCheck } = require('./drift-check.cjs');
+    // runDriftCheck prints its own lines (drift-check.cjs:223); only the verdict
+    // needs adding here.
+    const result = runDriftCheck({ model: opts.model, host: opts.host, port: opts.port, key: opts.key });
+    console.log('drift: ' + (result.verdict || (result.ok ? 'none' : 'see above')));
+  } catch (error) {
+    console.warn('drift check unavailable: ' + error.message);
+  }
 }
 
 function list() {
@@ -675,7 +700,7 @@ function parse(argv) {
   const positional = [];
   const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
     noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false,
-    noRecord: false, noVerify: false };
+    noRecord: false, noVerify: false, noDrift: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--model') opts.model = args[++i];
@@ -688,6 +713,7 @@ function parse(argv) {
     else if (arg === '--no-device-art') opts.noDeviceArt = true;
     else if (arg === '--no-record') opts.noRecord = true;
     else if (arg === '--no-verify') opts.noVerify = true;
+    else if (arg === '--no-drift') opts.noDrift = true;
     else if (arg === '--input-art') opts.inputArtFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
     else positional.push(arg);

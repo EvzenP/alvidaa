@@ -781,3 +781,8 @@ test('--no-record and --no-verify parse, and both are off by default', () => {
   assert.equal(off.opts.noRecord, true);
   assert.equal(off.opts.noVerify, true);
 });
+
+test('--no-drift parses, and is off by default', () => {
+  assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10']).opts.noDrift, false);
+  assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10', '--no-drift']).opts.noDrift, true);
+});
