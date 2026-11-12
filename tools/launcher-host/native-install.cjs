@@ -547,7 +547,11 @@ async function verifyStep(opts, m, expected, what) {
     const { verifyAfter } = require('./verify-install.cjs');
     const { sshRemote } = require('./deploy-check.cjs');
     const result = await verifyAfter({ transport: sshRemote(opts), model: m, expected });
-    for (const line of result.lines || []) console.log(line);
+    for (const check of result.checks || []) {
+      console.log('  ' + String(check.status).padEnd(4) + '  ' + check.name +
+        (check.observed ? '  ' + check.observed : ''));
+    }
+    console.log('verify: ' + (result.verdict || (result.ok ? 'ok' : 'failed')));
     if (!result.ok) {
       throw new Error('the ' + what + ' bundle IS in place (the switch reported OK), but verification failed:\n' +
         '  ' + (result.verdict || 'see the checks above') + '\n' +

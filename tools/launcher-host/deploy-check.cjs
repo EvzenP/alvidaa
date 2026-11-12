@@ -112,30 +112,34 @@ function sshRemote(opts) {
   // always transient. One retry after a short pause turns a spurious no-go into
   // a correct answer; a real failure still fails twice and is reported.
   const TRANSIENT = /connection (closed|reset)|kex_exchange_identification|broken pipe/i;
-  function spawn(command, encoding) {
+  // Returns the raw spawnSync result after retrying a transient lane failure.
+  // Used by both exec and readFile: a 176 KB frame read is exactly the kind of
+  // call dropbear resets, and it did on the first real verification run
+  // (2026-11-12).
+  function spawnRaw(command, encoding) {
     let last;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       const r = cp.spawnSync('ssh', sshArgs(opts, PATH_PREFIX + command), {
         encoding, maxBuffer: 64 * 1024 * 1024
       });
       if (r.error) throw new Error('cannot run ssh: ' + r.error.message);
-      if (r.status !== 255) return r.stdout;
+      if (r.status !== 255) return r;
       last = r;
       if (!TRANSIENT.test(String(r.stderr || ''))) break;
-      if (attempt === 0) cp.spawnSync('sleep', ['1']);
+      cp.spawnSync('sleep', ['1']);
     }
     // ssh's own exit code: the lane, not the command, failed.
     throw new Error('ssh failed: ' + String(last.stderr || '').trim().split('\n').pop());
+  }
+  function spawn(command, encoding) {
+    return spawnRaw(command, encoding).stdout;
   }
   return {
     exec(cmd) { return String(spawn(cmd, 'utf8')); },
     readFile(remotePath) {
       // Buffer for binary-safe reads; a non-zero status means the read
       // failed (missing file, permissions) and must reach the caller.
-      const r = cp.spawnSync('ssh', sshArgs(opts, PATH_PREFIX + 'cat ' + remotePath), {
-        encoding: 'buffer', maxBuffer: 64 * 1024 * 1024
-      });
-      if (r.error) throw new Error('cannot run ssh: ' + r.error.message);
+      const r = spawnRaw('cat ' + remotePath, 'buffer');
       if (r.status !== 0) throw new Error('cannot read ' + remotePath + ' over ssh (status ' + r.status + ')');
       return r.stdout;
     },
