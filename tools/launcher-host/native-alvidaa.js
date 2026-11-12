@@ -40,6 +40,9 @@
   // Recently-used ordering (issue #55): alvidaa_recent maps app id -> last
   // launch epoch ms and is pruned to this many entries.
   var RECENT_MAX = 40;
+  // Idle screen (issue #58): minutes of no key and no source change before
+  // the Home fades to the clock-only layer. 0 is off, which is the default.
+  var IDLE_STEPS = [0, 1, 5, 15];
   // Brand colours, so a letter badge reads as the app rather than as a random
   // hue. Only used when the build gives us no icon.
   var BRANDS = [
@@ -165,6 +168,7 @@
           nameDraft: "", nameIndex: 0, nameSourceId: null,
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
+          idle: false, idleAt: 0, idleFade: 1,
           autoSwitchId: null, autoSwitchName: "", autoSwitchAt: 0,
           activeArt: "", activeArtId: null,
           outgoingArt: "", outgoingArtId: null,
@@ -172,7 +176,8 @@
           outgoingArtOpacity: 1,
           prefs: {
             hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null,
-            autoSwitch: false, recentOrder: true, recent: {}, favorites: []
+            autoSwitch: false, recentOrder: true, recent: {}, favorites: [],
+            idleMinutes: 0
           }
         };
       },
@@ -194,7 +199,8 @@
             autoSwitch: isTruthy(readPref("alvidaa_auto_switch", false)),
             recentOrder: isTruthy(readPref("alvidaa_recent_order", true)),
             recent: readPref("alvidaa_recent", {}),
-            favorites: readPref("alvidaa_favorites", [])
+            favorites: readPref("alvidaa_favorites", []),
+            idleMinutes: Number(readPref("alvidaa_idle_minutes", 0)) || 0
           };
           if (this._lastData && this._lastData.apps) {
             this.apps = this.sortRecent(this.filterApps(this._lastData.apps));
@@ -260,6 +266,17 @@
             vm.sources = data.sources.filter(function (input) {
               return input && input.sourceId != null;
             });
+            // A source going live or dropping is presence too: it cancels the
+            // idle screen and restarts the window. An unchanged payload does
+            // not — the platform re-reports periodically, and re-arming on
+            // every poll would mean the screen never idles at all.
+            var liveKey = vm.sources.filter(signalOf).map(function (input) {
+              return String(input.sourceId);
+            }).join(",");
+            if (firstPayload || liveKey !== vm._liveIds) {
+              vm._liveIds = liveKey;
+              vm.cancelIdle();
+            }
             if (data.errors && data.errors.length) {
               vm.showToast(data.errors.join("; "));
             }
@@ -281,6 +298,9 @@
           this._clock = setInterval(function () {
             vm.now = new Date();
             var nowMs = Date.now();
+            if (vm.idleAt && !vm.idle && nowMs >= vm.idleAt) {
+              vm.enterIdle();
+            }
             if (vm.autoSwitchAt && nowMs >= vm.autoSwitchAt) {
               vm.triggerAutoSwitch();
             }
@@ -331,6 +351,14 @@
           this.autoSwitchAt = 0;
           this.autoSwitchId = null;
           this.autoSwitchName = "";
+          this.idle = false;
+          this.idleFade = 1;
+          this.idleAt = 0;
+          this._liveIds = "";
+          if (this._idleFadeTimer) {
+            clearTimeout(this._idleFadeTimer);
+            this._idleFadeTimer = null;
+          }
           if (root.document && root.document.body) {
             root.document.body.removeEventListener("key-down", this._keyDown);
           }
@@ -346,6 +374,8 @@
           this.dock = this.smartIndex();
           this.app = 0;
           this.syncArt();
+          // Arriving at the Home is presence: the idle window restarts.
+          this.armIdle();
         },
         smartIndex: function () {
           for (var i = 0; i < this.sources.length; i++) {
@@ -606,6 +636,56 @@
             this.showToast("auto-switch cancelled");
           }
         },
+        // --- idle screen (issue #58) -----------------------------------------
+        //
+        // One deadline (idleAt), armed by anything that proves presence — a
+        // key, a source change, a launch, arriving at the Home — and checked
+        // by the clock interval that already runs every second, so there is
+        // no second interval. While the idle layer is up, handleKey consumes
+        // every key: the wake key must only wake, never also activate what it
+        // lands on.
+        armIdle: function () {
+          var minutes = this.prefs ? Number(this.prefs.idleMinutes) || 0 : 0;
+          this.idleAt = minutes > 0 ? Date.now() + minutes * 60000 : 0;
+          return this.idleAt;
+        },
+        enterIdle: function () {
+          if (this.idle || !this.idleAt) return;
+          this.idle = true;
+          this.idleAt = 0;
+          this.idleFade = 0;
+          var vm = this;
+          if (typeof setTimeout === "function") {
+            // Same trick as the art cross-fade: paint at opacity 0, then flip
+            // on a tick so the transition actually runs.
+            this._idleFadeTimer = setTimeout(function () {
+              vm.idleFade = 1;
+              vm._idleFadeTimer = null;
+            }, 16);
+          } else {
+            this.idleFade = 1;
+          }
+        },
+        cancelIdle: function () {
+          // The wake path and the source-change path both come through here:
+          // drop the layer and re-arm the window with the current setting.
+          if (this._idleFadeTimer) {
+            clearTimeout(this._idleFadeTimer);
+            this._idleFadeTimer = null;
+          }
+          this.idle = false;
+          this.idleFade = 1;
+          return this.armIdle();
+        },
+        cycleIdle: function (dir) {
+          var at = IDLE_STEPS.indexOf(Number(this.prefs.idleMinutes) || 0);
+          if (at < 0) at = 0;
+          writePref("alvidaa_idle_minutes",
+            IDLE_STEPS[(at + (dir < 0 ? IDLE_STEPS.length - 1 : 1)) % IDLE_STEPS.length]);
+          this.readPrefs();
+          // Re-arm with the new value; stepping to off wakes the screen.
+          return this.cancelIdle();
+        },
         run: function (action) {
           var vm = this;
           try {
@@ -725,6 +805,12 @@
               speak: "Only-list active, overrides hidden apps"
             });
           }
+          rows.push({
+            kind: "idle", label: "Idle screen",
+            value: this.prefs.idleMinutes > 0 ? this.prefs.idleMinutes + " min" : "off",
+            speak: "Idle screen, " +
+              (this.prefs.idleMinutes > 0 ? this.prefs.idleMinutes + " minutes" : "off")
+          });
           rows.push({
             kind: "recent", label: "Recently-used order",
             sub: "sorts the apps overlay by launch time",
@@ -865,6 +951,7 @@
           if (!row) return;
           if (row.kind === "autoswitch") this.toggleAutoSwitch();
           else if (row.kind === "recent") this.toggleRecentOrder();
+          else if (row.kind === "idle") this.cycleIdle(1);
           else if (row.kind === "open-apps") { this.settingsPage = "apps"; this.settingsIndex = 0; this.clamp(); }
           else if (row.kind === "open-inputs") { this.settingsPage = "inputs"; this.settingsIndex = 0; this.clamp(); }
           else if (row.kind === "only-list") this.clearOnlyList();
@@ -872,14 +959,16 @@
           else if (row.kind === "input") this.openNameEditor(row.input);
           else if (row.kind === "reset-name") this.resetName(row.input);
         },
-        nudgeSettingsRow: function () {
+        nudgeSettingsRow: function (dir) {
           var row = this.settingsRows()[this.settingsIndex];
           if (!row) return;
           // Left/Right change a value: the auto-switch and recently-used
-          // toggles, and the pin.
+          // toggles, the pin, and the idle timeout, which steps through
+          // off / 1 / 5 / 15 in the direction pressed.
           if (row.kind === "autoswitch") this.toggleAutoSwitch();
           else if (row.kind === "recent") this.toggleRecentOrder();
           else if (row.kind === "app") this.togglePin(row.app);
+          else if (row.kind === "idle") this.cycleIdle(dir);
         },
         handleSettingsKey: function (code) {
           if (this.settingsPage === "name") {
@@ -905,14 +994,17 @@
           if (code === keys.ENTER) { this.activateSettingsRow(); return true; }
           if (code === keys.UP) { this.settingsIndex--; this.clamp(); return true; }
           if (code === keys.DOWN) { this.settingsIndex++; this.clamp(); return true; }
-          if (code === keys.LEFT) { this.nudgeSettingsRow(); return true; }
-          if (code === keys.RIGHT) { this.nudgeSettingsRow(); return true; }
+          if (code === keys.LEFT) { this.nudgeSettingsRow(-1); return true; }
+          if (code === keys.RIGHT) { this.nudgeSettingsRow(1); return true; }
           // Unhandled keys (digits included) pass through, same contract as
           // the apps overlay.
           return false;
         },
         activate: function () {
           var vm = this;
+          // A launch or switch cancels the idle screen even on the paths that
+          // bypass the key handler (the tiles' click handlers).
+          this.cancelIdle();
           if (this.zone === "dock") {
             var input = this.dockItems()[this.dock];
             if (!input) return;
@@ -940,6 +1032,7 @@
         launchFocused: function () {
           var vm = this, app = this.apps[this.overlayIndex];
           if (!app) return;
+          this.cancelIdle();
           this.showToast("Opening " + (app.appName || "app") + "…");
           this.recordLaunch(app.appId);
           this.run(function () { return vm._platform.launchApp(app.appId); });
@@ -968,6 +1061,16 @@
           if (label) sdk.tts.speak(label);
         },
         handleKey: function (code) {
+          if (this.idle) {
+            // The wake key must only wake. Consume it: change nothing, launch
+            // nothing — a wake that also activates whatever it landed on is
+            // worse than no idle screen. Every keypress, digits included,
+            // comes through here while the layer is up.
+            this.cancelIdle();
+            return true;
+          }
+          // Presence: any key restarts the idle window, handled or not.
+          this.armIdle();
           if (this.settings) {
             var handled = this.handleSettingsKey(code);
             // A key consumed by the settings layer still proves the user is
@@ -1061,6 +1164,55 @@
           return h("div", { style: box(x, y, null, null, {
             fontSize: size, lineHeight: size + 4, color: color, fontWeight: String(weight || 500)
           }) }, [value]);
+        }
+
+        // ---- the idle layer (issue #58) -------------------------------------
+        // The whole tree while it is up: wallpaper, a large clock, the date —
+        // no dock, no chrome, no HUD. State underneath is untouched, so wake
+        // puts back exactly what was there. The fade-in paints at opacity 0
+        // over the near-black root, then flips on a tick so the transition
+        // runs. Shapes and text only: this engine paints neither SVG data
+        // URIs nor the vendor icon font outside its own components (findings
+        // 13 section 8), so beyond the build-time wallpaper this is divs.
+        if (this.idle) {
+          var idleWallpaper = root.AlvidaaNativeWallpaper;
+          return h("div", {
+            attrs: { id: "alvidaa-native", "data-idle-screen": "true",
+              "aria-label": "Idle screen" },
+            style: {
+              position: "absolute", left: "0", top: "0", width: "100%",
+              height: "100%", overflow: "hidden", backgroundColor: "#07080c",
+              color: "#f8fafc", opacity: this.idleFade,
+              transition: "opacity 500ms ease-out",
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            }
+          }, [
+            idleWallpaper ? h("div", { style: {
+              position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+              backgroundImage: "url(" + JSON.stringify(idleWallpaper) + ")",
+              backgroundSize: "cover", backgroundPosition: "center"
+            } }) : h("div", { style: {
+              position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+              pointerEvents: "none",
+              backgroundImage: "linear-gradient(180deg, rgba(56,189,248,0.06), rgba(99,102,241,0.02) 40%, rgba(7,8,12,0) 70%)"
+            } }),
+            h("div", { style: {
+              position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+              pointerEvents: "none", backgroundColor: "rgba(6,8,12,0.55)"
+            } }),
+            h("div", { style: box(0, 380, 1920, null, {
+              textAlign: "center", fontSize: 224, lineHeight: 232,
+              fontWeight: "300", letterSpacing: "-4px"
+            }) }, [
+              h("span", { style: { color: "#ffffff" } }, [p2(this.now.getHours())]),
+              h("span", { style: { color: "rgba(255,255,255,0.35)" } }, [":"]),
+              h("span", { style: { color: "rgba(255,255,255,0.92)" } }, [p2(this.now.getMinutes())])
+            ]),
+            h("div", { style: box(0, 660, 1920, null, {
+              textAlign: "center", fontSize: 30, lineHeight: 38,
+              color: "#8e9ab0", fontWeight: "600", letterSpacing: "2px"
+            }) }, [dateText])
+          ]);
         }
 
         // Device icons drawn as divs. This engine does not paint SVG data URIs

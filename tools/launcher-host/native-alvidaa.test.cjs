@@ -1282,7 +1282,7 @@ test('settings: the only-list row appears only when set and OK clears it', () =>
   w.start();
   openSettings(w);
   const rows = w.settingsRows();
-  assert.equal(rows.length, 5, 'four root rows plus the recently-used toggle');
+  assert.equal(rows.length, 6, 'five root rows plus the recently-used toggle');
   assert.equal(rows[3].kind, 'only-list');
   w.settingsIndex = 3;
   w.handleKey(k.ENTER);
@@ -1588,3 +1588,182 @@ test('first frame: the dock paints placeholder tiles at final geometry before th
   v.stop();
 });
 
+
+// ---- idle screen (issue #58) -------------------------------------------------
+
+function clockTick(f) {
+  return Array.from(f.timers.values())[0];
+}
+
+test('idle: off by default and the row says so', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(v.prefs.idleMinutes, 0, 'alvidaa_idle_minutes defaults to 0 = off');
+  assert.equal(v.idleAt, 0, 'no deadline armed when off');
+  assert.equal(v.idle, false);
+  openSettings(v);
+  const rows = v.settingsRows();
+  const row = rows.find(r => r.kind === 'idle');
+  assert.ok(row, 'the Idle screen row exists on the root page');
+  assert.equal(row.label, 'Idle screen');
+  assert.equal(row.value, 'off');
+  assert.equal(rows.indexOf(rows.find(r => r.kind === 'recent')), rows.length - 1,
+    'the recently-used row stays last');
+  v.stop();
+});
+
+test('idle: fades in after the timeout and renders clock, date and nothing else', () => {
+  const f = setup({ storage: { alvidaa_idle_minutes: 1 } }), v = f.instance;
+  f.root.AlvidaaNativeWallpaper = 'data:image/png;base64,AAAWALL';
+  v.start();
+  assert.equal(v.prefs.idleMinutes, 1);
+  assert.ok(v.idleAt > Date.now(), 'the deadline is armed from the existing clock interval');
+  const tick = clockTick(f);
+  tick();
+  assert.equal(v.idle, false, 'before the deadline nothing happens');
+  v.idleAt = Date.now() - 1;
+  tick();
+  assert.equal(v.idle, true, 'the clock tick alone enters idle');
+  assert.equal(v.idleAt, 0, 'the deadline is spent');
+
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  let flat = flatten(draw());
+  const idle = flat.find(n => n.data && n.data.attrs && n.data.attrs['data-idle-screen'] === 'true');
+  assert.ok(idle, 'the idle layer renders');
+  assert.equal(idle.data.style.opacity, 0, 'the fade starts transparent');
+  assert.ok(idle.data.style.transition.includes('opacity'));
+  assert.ok(v._idleFadeTimer != null, 'the fade tick is scheduled');
+  f.timeouts.get(v._idleFadeTimer)();
+  flat = flatten(draw());
+  assert.equal(flat.find(n => n.data.attrs['data-idle-screen']).data.style.opacity, 1,
+    'the fade flips to 1 on the tick');
+
+  // Wallpaper, a large clock, the date — no dock, no chrome, no HUD. Shapes
+  // and text only: no <img>, no SVG data URI (findings 13 section 8).
+  const texts = flat.flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes(':'), 'the clock is rendered');
+  assert.ok(texts.some(t => /^[A-Z]+ \u00b7 [A-Z]+ \d+$/.test(t)), 'the date is rendered');
+  assert.equal(texts.includes('INPUTS & SOURCES'), false, 'no dock chrome');
+  assert.equal(texts.includes('LIVE') || texts.includes('STANDBY'), false, 'no dock tiles');
+  assert.equal(texts.includes('APPS'), false, 'no apps row');
+  assert.equal(flat.some(n => n.data && n.data.attrs && n.data.attrs.role === 'status'),
+    false, 'no HUD pill');
+  assert.equal(flat.filter(n => n.tag === 'img').length, 0, 'no images');
+  assert.equal(flat.filter(n => n.data && n.data.style &&
+    /url\(/.test(String(n.data.style.backgroundImage || ''))).length, 1,
+    'only the build-time wallpaper paints as an image');
+  v.stop();
+});
+
+test('idle: any key wakes and is consumed — nothing activates', () => {
+  const f = setup({ storage: { alvidaa_idle_minutes: 5 } }), v = f.instance, k = KEYS;
+  v.start();
+  const tick = clockTick(f);
+  const goIdle = () => { v.idleAt = Date.now() - 1; tick(); assert.equal(v.idle, true); };
+  const sources = () => f.calls.filter(c => c[0] === 'source').length;
+
+  // The dock's focused input is TV (sourceId 0); ENTER must not switch to it.
+  v.dock = 0;
+  goIdle();
+  assert.equal(v.handleKey(k.ENTER), true, 'the wake key is consumed');
+  assert.equal(v.idle, false, 'and it wakes');
+  assert.equal(sources(), 0, 'ENTER must not switch source on wake');
+  assert.ok(v.idleAt > Date.now(), 'the window re-arms after the wake');
+
+  goIdle();
+  assert.equal(v.handleKey(k.NUM_3), true, 'a number key wakes too');
+  assert.equal(v.idle, false);
+  assert.equal(v.dock, 0, 'and must not jump the dock to slot 3');
+  assert.equal(sources(), 0, 'or launch whatever slot 3 holds');
+
+  goIdle();
+  assert.equal(v.handleKey(k.BACK), true, 'BACK wakes instead of leaving Home');
+  assert.equal(v.idle, false);
+
+  goIdle();
+  assert.equal(v.handleKey(999), true, 'even a key no layer handles wakes the screen');
+  assert.equal(v.idle, false);
+
+  // State is preserved under the idle layer: wake returns to what was there.
+  openSettings(v);
+  assert.equal(v.settings, true);
+  goIdle();
+  assert.equal(v.handleKey(k.ENTER), true);
+  assert.equal(v.settings, true, 'wake restores the layer that was open');
+  v.closeSettings();
+  v.stop();
+});
+
+test('idle: a source going live cancels the screen; an unchanged poll does not', () => {
+  const f = setup({ storage: { alvidaa_idle_minutes: 1 } }), v = f.instance;
+  v.start();
+  const sameSources = [
+    { sourceId: 0, name: 'TV', is_signal: '1' },
+    { sourceId: 'HDMI2', name: 'HDMI2', displayname2: 'PlayStation 5', is_signal: 0 },
+    { sourceId: 'HDMI3', name: 'HDMI3', rename: 'Fire TV Stick', has_signal: '1' }
+  ];
+  const liveSources = sameSources.map(s => Object.assign({}, s,
+    { is_signal: s.sourceId === 'HDMI2' ? '1' : s.is_signal }));
+  v.idleAt = Date.now() - 1;
+  clockTick(f)();
+  assert.equal(v.idle, true);
+  f.notify()({ apps: [], sources: sameSources, errors: [], waiting: false });
+  assert.equal(v.idle, true, 'an unchanged poll must not wake the screen');
+  f.notify()({ apps: [], sources: liveSources, errors: [], waiting: false });
+  assert.equal(v.idle, false, 'a source going live wakes the screen');
+  assert.ok(v.idleAt > Date.now(), 'and re-arms the window');
+  v.stop();
+});
+
+test('idle: an app launch cancels the screen', () => {
+  const f = setup({ storage: { alvidaa_idle_minutes: 1 } }), v = f.instance;
+  v.start();
+  v.idleAt = Date.now() - 1;
+  clockTick(f)();
+  assert.equal(v.idle, true);
+  v.overlay = true;
+  v.overlayIndex = 0;
+  v.launchFocused();
+  assert.equal(v.idle, false, 'the launch cancels idle');
+  assert.deepEqual(f.calls.at(-1), ['launch', '1']);
+  assert.ok(v.idleAt > Date.now(), 'the window re-arms');
+  v.stop();
+});
+
+test('idle: the setting round-trips through the settings row', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  openSettings(v);
+  // Root page order: autoswitch, open-apps, open-inputs, idle, recent.
+  assert.equal(v.settingsRows()[3].kind, 'idle');
+  v.settingsIndex = 3;
+  v.handleKey(k.ENTER);
+  assert.equal(f.store.get('alvidaa_idle_minutes'), '1', 'stored as a JSON number');
+  assert.equal(v.prefs.idleMinutes, 1);
+  assert.equal(v.settingsRows()[3].value, '1 min');
+  v.handleKey(k.RIGHT);
+  assert.equal(f.store.get('alvidaa_idle_minutes'), '5');
+  v.handleKey(k.RIGHT);
+  assert.equal(f.store.get('alvidaa_idle_minutes'), '15');
+  assert.equal(v.settingsRows()[3].value, '15 min');
+  v.handleKey(k.RIGHT);
+  assert.equal(f.store.get('alvidaa_idle_minutes'), '0', '15 wraps to off');
+  assert.equal(v.settingsRows()[3].value, 'off');
+  v.handleKey(k.LEFT);
+  assert.equal(f.store.get('alvidaa_idle_minutes'), '15', 'Left steps back');
+  assert.ok(v.idleAt > Date.now(), 'the armed deadline follows the setting');
+  v.stop();
+});
+
+test('idle: stop() clears the layer, the deadline and the fade timer', () => {
+  const f = setup({ storage: { alvidaa_idle_minutes: 1 } }), v = f.instance;
+  v.start();
+  v.idleAt = Date.now() - 1;
+  clockTick(f)();
+  assert.equal(v.idle, true);
+  assert.ok(f.timeouts.size >= 1, 'the fade tick is pending');
+  v.stop();
+  assert.equal(v.idle, false);
+  assert.equal(v.idleAt, 0);
+  assert.equal(f.timeouts.size, 0, 'the fade timer is cleaned up');
+});

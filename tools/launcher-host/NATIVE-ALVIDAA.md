@@ -82,6 +82,32 @@ When opt-in preference `alvidaa_auto_switch` is enabled in `sdk.storage` (defaul
 - If no inputs or multiple inputs have signal, or if `alvidaa_auto_switch` is false, no countdown starts.
 - The countdown cancels immediately on `stop()`.
 
+### Idle screen
+
+A TV left on the Home burns the panel and shows the clock to an empty room
+(issue #58). After `alvidaa_idle_minutes` of no key and no source change, the
+Home fades to an idle layer: the build-time wallpaper, a large clock, the
+date — no dock, no chrome, no HUD. State underneath is untouched, so wake
+puts back exactly what was there, including an open settings layer.
+
+- **The wake key must only wake.** While the layer is up, `handleKey` consumes
+  every key — ENTER, digits, BACK, anything — returns `true` and changes
+  nothing. A wake that also launches an app is worse than no idle screen.
+- **Any input change (a source going live) or an app launch cancels it.** The
+  platform callback compares the live-source set between payloads: a change
+  wakes the screen and re-arms; an unchanged poll does not, because the
+  platform re-reports periodically and re-arming on every poll would mean the
+  screen never idles at all.
+- **Off by default.** The `Idle screen` settings row steps `off / 1 min /
+  5 min / 15 min` (Left/Right step in the direction pressed, OK steps
+  forward), persisted as `alvidaa_idle_minutes` — a JSON number, `0` = off.
+- **One timer, not two.** The deadline (`idleAt`) is armed by anything that
+  proves presence — a key, a source change, a launch, arriving at the Home —
+  and checked by the clock interval that already runs every second.
+- **Shapes and text only.** The layer is divs: wallpaper, clock, date. No
+  `<img>`, no SVG data URI, no vendor icon font — this engine paints none of
+  those from an injected component (findings 13 §8).
+
 ### Input art: shapes, not images
 
 Each input gets a device icon matched from the name the TV reports. The icons are
@@ -184,6 +210,7 @@ note that static custom names can go stale if the physical device changes.
 | `alvidaa_custom_names` | object | `{}` | Map of `sourceId` (or input label) to custom display name applied in `sourceName()`. |
 | `alvidaa_last_used` | string / number | `null` | Last activated input `sourceId`, persisted on dock activation and used as `smartIndex()` fallback when no input has signal. |
 | `alvidaa_auto_switch` | boolean | `false` | Opt-in toggle for automatic input switching on boot. |
+| `alvidaa_idle_minutes` | number | `0` | Minutes of no key and no source change before the Home fades to the idle layer; `0` is off (issue #58). |
 | `alvidaa_recent` | object | `{}` | Map of app id to last-launch epoch ms, pruned to the 40 newest; drives the overlay's recently-used ordering (issue #55). |
 | `alvidaa_recent_order` | boolean | `true` | When off, the apps overlay keeps vendor order and launches are not recorded. |
 | `alvidaa_favorites` | array of strings | `[]` | Pinned favorite app IDs in view 2 (max 5), launched directly. Stale IDs dropped silently. |
@@ -205,7 +232,9 @@ overlay. `announce()` speaks the focused row (or keyboard cell) for TTS.
   JSON boolean (OK or Left/Right); `Apps` (`N shown, M hidden`) and
   `Input names` open their pages; `Only-list active` renders only when
   `alvidaa_only_apps` is non-empty and OK clears it (writes `[]`); the
-  `Recently-used order` row toggles `alvidaa_recent_order` the same way —
+  `Idle screen` row steps `alvidaa_idle_minutes` through
+  `off / 1 min / 5 min / 15 min` (Left/Right step in the direction pressed);
+  the `Recently-used order` row toggles `alvidaa_recent_order` the same way —
   off, the apps overlay keeps vendor order and launches stop being recorded.
   The
   only-list overrides the hidden list, so the row says exactly that instead of
@@ -474,5 +503,8 @@ zero-input payload), the settings
 surface (door ownership, root rows,
 auto-switch toggle, hide/unhide, pin cap, keyboard rename, blank-draft delete,
 Reset row, only-list rule, absent-storage no-ops, hotkey suppression, TTS
-labels), render structure and scaling, the entry's variant selection, and the
-build's hash and output guards.
+labels), the idle screen (off by default, fade-in on the clock tick, the idle
+layer rendering wallpaper/clock/date and nothing else, every wake key consumed
+without activating, source-change cancel versus unchanged poll, launch cancel,
+the settings row round-trip, stop() cleanup), render structure and scaling,
+the entry's variant selection, and the build's hash and output guards.
