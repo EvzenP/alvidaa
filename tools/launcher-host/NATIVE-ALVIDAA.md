@@ -108,6 +108,39 @@ puts back exactly what was there, including an open settings layer.
   `<img>`, no SVG data URI, no vendor icon font — this engine paints none of
   those from an injected component (findings 13 §8).
 
+### Per-app tint (issue #56)
+
+The dark Home is deliberately flat, but it does not know what is on it — both
+audits (dumbtv's `FocusColor`, CleanMyTV's `tileTint`) proposed tinting the
+background toward the focused app's colour. The constraint that shapes the
+implementation: lane 3 cannot sample icons at runtime (canvas reads on
+cross-origin images are blocked, and the launcher must stay network-free), so
+the colours are extracted **host-side, at build time**, by
+[app-colours.cjs](app-colours.cjs) — a dependency-free PNG reader (node:zlib,
+the five scanline filters, 8-bit grey/grey+alpha/RGB/RGBA plus packed
+palette) that picks the dominant colour per icon and caps its luminance.
+
+- **The map is build-time input.** `install --app-colours <file.json>` takes
+  the extractor's JSON (icon basename → `#rrggbb`), validates it (basename
+  keys, `#rrggbb` values, 64-entry cap — dropped entries are named in
+  warnings), and the build bakes it as `self.AlvidaaNativeAppColours`, the
+  same shape and the same absent-is-fine contract as
+  `AlvidaaNativeInputArt`. No flag, no map, no tint layer at all.
+- **The component fades the wash.** When the focused favourite resolves to an
+  icon whose basename the map carries, a full-screen layer above the contrast
+  wash fades to that colour over 350ms; stepping to a door, an uncoloured app
+  or back to the dock fades it out (the last hue is kept while fading, so the
+  colour dissolves rather than cutting). The layer is always mounted at
+  opacity 0, so both directions are ordinary CSS transitions.
+- **Two ceilings, on purpose.** The extractor caps a colour's relative
+  luminance at 0.5 and the tint layer's opacity at 0.22, and the component
+  clamps again at render — the component-side clamp is the guarantee, because
+  a map can also be hand-made. A white icon reads as a hue shift, never a
+  wash-out.
+- **Missing colour means the current background.** Non-PNG icons (JPEG/WebP
+  are deliberately not decoded), icons the pipeline never had as files, and
+  apps without favourites all keep the plain wash.
+
 ### Input art: shapes, not images
 
 Each input gets a device icon matched from the name the TV reports. The icons are
@@ -318,6 +351,7 @@ Feature-by-feature walk comparing the canvas watcher UI (`launcher/index.html` r
 | **Pinned favorites / shortcuts** | View 2 displays `shortcuts` array (URL shortcuts with `★` glyph) | View 2 displays up to 5 pinned favorite apps from `alvidaa_favorites`; activates app directly without opening overlay; clamped safely | `parity` | Favorites render the app's real icon through `appIcon()` (same local-file / `*.vidaahub.com` allowlist as the overlay); the star glyph (`★`) is only the fallback when no allowlisted icon exists |
 | **Recently-used ordering** | Vendor order only | Apps overlay lists launched apps newest-first from `alvidaa_recent` (capped at 40 entries); apps with no record keep their vendor relative order behind the recorded ones; toggle row in Home settings | `native-only` | Off stops the recording as well as the sorting, so re-enabling starts from vendor order |
 | **Per-input wallpaper art** | Daily rotating wallpaper images or ambient gradients; no per-input art mapping | Build-time map `self.AlvidaaNativeInputArt` (local/data URI only); two-phase stacked cross-fade (incoming 0->1, outgoing 1->0) over 300ms | `native-only` | Switching to an input without configured art fades the outgoing art 1 -> 0 over the same 300ms, so the wallpaper arrives as a cross-fade rather than a cut |
+| **Per-app background tint** | Not present (flat dark background) | Build-time map `self.AlvidaaNativeAppColours` extracted host-side from allowlisted PNG icons (`app-colours.cjs`); the wash fades toward the focused favourite's colour over 350ms and back; luminance-capped at 0.5, tint opacity capped at 0.22 | `native-only` | Missing colour means the current background; the component re-clamps at render, so even a hand-made map cannot wash the screen out |
 | **Toast HUD** | Viewport-fixed bottom glass capsule for action status and error messages | Viewport-fixed bottom floating glass pill HUD with opacity/transform transitions; drives action feedback, failure alerts, auto-switch notices | `parity` | Replaced legacy raw status text line |
 | **App filtering and custom names** | Server-side configuration | Storage-backed `alvidaa_hidden_apps`, `alvidaa_only_apps`, and `alvidaa_custom_names` with no-op fallback | `parity` | The settings surface (view 2 `Launcher` door) writes these keys in-launcher: hide/unhide apps, pin favorites, rename inputs, clear the only-list — no page injection needed |
 | **Last-used focus persistence** | Saved to `localStorage` on activation; restored on cold boot | Persisted to `sdk.storage` key `alvidaa_last_used` on dock activation; restored on cold launch | `parity` | Used as smart index fallback when no input has signal |
@@ -502,6 +536,23 @@ no such global and fall back to `AlvidaaFreeMyTV`.
       6. At dock view, `handleKey()` returns `false` — key event is not consumed and reaches the vendor shell cleanly.
     - *(pending hardware verification)*
 
+15. **Idle screen and the wake-key contract**
+    - **What to press**: In view 2, open the `Launcher` door and set `Idle screen` to `1 min` (the row persists `alvidaa_idle_minutes` as a JSON number). Leave the Home untouched for a minute — no keys, no source changes. Then press `OK`, then a number key, then `Back`.
+    - **What to expect** *(Claim)*:
+      - After the timeout the Home fades (about 500ms) to the idle layer: the build-time wallpaper, a large clock, the date — no dock, no apps row, no HUD pill.
+      - The first keypress only wakes: the Home returns exactly as it was left (same focus, any open layer still open), and the key does **not** also activate what it landed on — no source switch, no app launch.
+      - Each keypress restarts the window; with the row set to `off` the screen never idles.
+      - A source going live (or an app launching from another path) cancels the screen; the platform's unchanged periodic re-reports do not wake it.
+    - *(pending hardware verification)*
+
+16. **Per-app background tint**
+    - **What to press**: Build with `--app-colours <file.json>` (the extractor's output for at least one favourited app's local icon), pin that app as a favourite, then step between it, the `Apps` door and the dock in view 2.
+    - **What to expect** *(Claim)*:
+      - Focusing the favourited app fades the background wash toward its colour over about 350ms; stepping away fades back to the plain wash without a cut.
+      - The tint reads as a hue shift, never a wash-out, even for a white icon.
+      - Built without `--app-colours`, no tint layer exists and nothing changes.
+    - *(pending hardware verification)*
+
 ### Rollback procedure
 
 If any test fails or TV exhibits instability, execute the rollback immediately on the TV via the root wrapper:
@@ -543,5 +594,8 @@ the settings row round-trip, stop() cleanup), the groups in the apps overlay
 (unset config keeps the flat grid, config-array rendering with the Other-apps
 catch-all, empty groups dropped, ordering against the vendor order,
 Left/Right within a group and Up/Down between them, OK launching the focused
-app, one focus path over the flattened list), render structure and scaling,
-the entry's variant selection, and the build's hash and output guards.
+app, one focus path over the flattened list), the per-app tint (no map no
+layer, favourite focus fades the wash toward the baked colour and back, the
+render-side luminance clamp, malformed and missing entries, the build embedding
+the map only when given), render structure and scaling, the entry's variant
+selection, and the build's hash and output guards.

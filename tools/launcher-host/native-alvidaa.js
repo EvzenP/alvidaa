@@ -156,6 +156,23 @@
       }
       return false;
     }
+    // Per-app tint (issue #56): the build bakes a dominant colour per icon,
+    // luminance-capped at extraction (app-colours.cjs). The clamp here runs
+    // too, because a map can also be hand-made — a white icon must never wash
+    // the screen out regardless of where the map came from.
+    var TINT_LUMINANCE_CAP = 0.5, TINT_MAX_OPACITY = 0.22;
+    function luminanceOf(r, g, b) {
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    }
+    function clampTint(hex) {
+      var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16),
+        b = parseInt(hex.slice(5, 7), 16);
+      var l = luminanceOf(r, g, b);
+      if (!(l > TINT_LUMINANCE_CAP)) return hex.toLowerCase();
+      var f = TINT_LUMINANCE_CAP / l;
+      function pair(n) { var s = n.toString(16); return (s.length < 2 ? "0" : "") + s; }
+      return "#" + pair(Math.floor(r * f)) + pair(Math.floor(g * f)) + pair(Math.floor(b * f));
+    }
 
     return {
       name: "Launcher", // The shared shell's keep-alive list uses this name.
@@ -169,6 +186,7 @@
           now: new Date(), width: (root && root.innerWidth) || 1920,
           toast: "", toastUntil: 0,
           idle: false, idleAt: 0, idleFade: 1,
+          tintColour: "", tintOpacity: 0,
           autoSwitchId: null, autoSwitchName: "", autoSwitchAt: 0,
           activeArt: "", activeArtId: null,
           outgoingArt: "", outgoingArtId: null,
@@ -187,7 +205,9 @@
       beforeDestroy: function () { this.stop(); },
       watch: {
         "$route": function () { this.routeFocus(); },
-        dock: function () { this.syncArt(); }
+        dock: function () { this.syncArt(); },
+        app: function () { this.syncTint(); },
+        zone: function () { this.syncTint(); }
       },
       methods: {
         readPrefs: function () {
@@ -207,6 +227,8 @@
             this.apps = this.sortRecent(this.filterApps(this._lastData.apps));
           }
           this.clamp();
+          // The favorites row the tint reads may have changed under us.
+          this.syncTint();
         },
         filterApps: function (apps) {
           var vm = this;
@@ -356,6 +378,8 @@
           this.idleFade = 1;
           this.idleAt = 0;
           this._liveIds = "";
+          this.tintColour = "";
+          this.tintOpacity = 0;
           if (this._idleFadeTimer) {
             clearTimeout(this._idleFadeTimer);
             this._idleFadeTimer = null;
@@ -375,6 +399,7 @@
           this.dock = this.smartIndex();
           this.app = 0;
           this.syncArt();
+          this.syncTint();
           // Arriving at the Home is presence: the idle window restarts.
           this.armIdle();
         },
@@ -431,6 +456,31 @@
             icon = allowedIcon(unwrap(candidates[i]));
           }
           return icon.indexOf("var/local/storeAppIcon/") === 0 ? "file:///hisenseUI/" + icon : icon;
+        },
+        // Per-app tint (issue #56): the baked map is keyed by icon basename,
+        // because that is the part of the resolved icon the build could know.
+        // A missing entry, a door tile, or a malformed value all mean "keep
+        // the plain wash".
+        appColourFor: function (icon) {
+          var map = root.AlvidaaNativeAppColours;
+          if (!map || typeof map !== "object" || !icon) return "";
+          var value = String(icon);
+          var base = value.slice(value.lastIndexOf("/") + 1);
+          var colour = map[base] != null ? map[base] : map[value];
+          if (typeof colour !== "string" || !/^#[0-9a-fA-F]{6}$/.test(colour)) return "";
+          return clampTint(colour);
+        },
+        // The wash fades toward the focused favorite's colour and back to the
+        // plain wash when focus has none. The layer stays mounted (opacity 0),
+        // so both directions are ordinary CSS transitions — no tick needed.
+        syncTint: function () {
+          var colour = "";
+          if (this.zone === "apps") {
+            var item = this.appItems()[this.app];
+            if (item && item.kind === "favorite") colour = this.appColourFor(item.icon);
+          }
+          if (colour) this.tintColour = colour;
+          this.tintOpacity = colour ? 1 : 0;
         },
         dockItems: function () { return this.sources; },
         appItems: function () {
@@ -1693,7 +1743,27 @@
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
             pointerEvents: "none",
             backgroundColor: "rgba(6,8,12,0.55)"
-          } }),
+          } })
+        ]).concat((function () {
+          // Per-app tint (issue #56): only when the build baked a colour map.
+          // The layer is always mounted at opacity 0, so fading toward the
+          // focused app's colour — and back — is one CSS transition. The
+          // opacity ceiling plus the luminance cap keep it a tint, never a
+          // wash-out; the colour is last-won while fading out, so the hue
+          // dissolves instead of cutting.
+          var colourMap = root.AlvidaaNativeAppColours;
+          if (!colourMap || typeof colourMap !== "object") return [];
+          return [h("div", {
+            attrs: { "data-app-tint": "true" },
+            style: {
+              position: "absolute", left: "0", top: "0", width: "100%", height: "100%",
+              pointerEvents: "none",
+              backgroundColor: vm.tintColour || "rgba(6,8,12,0)",
+              opacity: vm.tintOpacity * TINT_MAX_OPACITY,
+              transition: "opacity 350ms ease-out, background-color 350ms ease-out"
+            }
+          })];
+        })()).concat([
           stage,
           (function () {
             var nowMs = Date.now();

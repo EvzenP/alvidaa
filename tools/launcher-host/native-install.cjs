@@ -510,6 +510,71 @@ function readInputArt(opts) {
   }
 }
 
+// --- per-app tint (issue #56) ------------------------------------------------
+//
+// The extractor (app-colours.cjs) turns allowlisted PNG icons into a
+// luminance-capped dominant-colour map on the host; its JSON output rides
+// --app-colours into the build, baked as self.AlvidaaNativeAppColours. Like
+// input art this is decoration: a missing file, bad JSON or unusable entries
+// warn and build without colours, never fail the build. Keys are icon
+// basenames (what the component resolves from the icon value the TV
+// reports); only #rrggbb values are accepted.
+
+const APP_COLOURS_MAX = 64;
+
+// Pure: the text of an --app-colours file -> { map, warnings }. Warnings name
+// the keys that were dropped, so a typo is visible instead of a mystery.
+function cleanAppColours(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (error) {
+    return { map: null, warnings: [], error: 'not valid JSON (' + error.message + ')' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { map: null, warnings: [], error: 'not a JSON object' };
+  }
+  const map = {};
+  const warnings = [];
+  for (const [key, value] of Object.entries(parsed)) {
+    const name = String(key);
+    if (Object.keys(map).length >= APP_COLOURS_MAX) {
+      warnings.push(name + ' (over the ' + APP_COLOURS_MAX + '-entry cap)');
+      continue;
+    }
+    if (!name || name.length > 128 || name.includes('/') || name.includes('\\')) {
+      warnings.push(name + ' (key must be an icon basename)');
+      continue;
+    }
+    if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) {
+      warnings.push(name + ' (value must be #rrggbb)');
+      continue;
+    }
+    map[name] = value.toLowerCase();
+  }
+  return { map, warnings, error: null };
+}
+
+function readAppColours(opts) {
+  if (!opts.appColoursFile) return { map: null, warnings: [], note: null };
+  let text;
+  try { text = fs.readFileSync(opts.appColoursFile, 'utf8'); }
+  catch (error) {
+    return { map: null, warnings: [], note: '--app-colours file unreadable (' +
+      error.message + '); building without app colours' };
+  }
+  const cleaned = cleanAppColours(text);
+  if (cleaned.error) {
+    return { map: null, warnings: cleaned.warnings, note: '--app-colours: ' +
+      cleaned.error + '; building without app colours' };
+  }
+  const count = Object.keys(cleaned.map).length;
+  return {
+    map: count ? cleaned.map : null,
+    warnings: cleaned.warnings,
+    note: count ? 'app colours: baked ' + count + ' icon tint(s)' : null
+  };
+}
+
 // --- the safety net the two new modules provide -----------------------------
 //
 // recovery-record captures what the TV looked like before we touched it, and
@@ -587,6 +652,13 @@ function install(id, opts) {
     console.warn('WARNING: input art for "' + name + '" is a remote URL — dropped; ' +
       'the launcher must stay offline (use a local file or an inline data URI)');
   }
+  // App colours are decoration on the same terms (issue #56).
+  const appColours = readAppColours(opts);
+  if (appColours.note) console.log(appColours.note);
+  for (const warning of appColours.warnings || []) {
+    console.warn('WARNING: app colour entry "' + warning + '" dropped; ' +
+      'keys must be icon basenames and values #rrggbb');
+  }
 
   // opts.builder stands in for the variant's real build module in the tests
   // only; a real run requires it, and a real build verifies the pinned stock
@@ -603,6 +675,7 @@ function install(id, opts) {
   const buildOptions = {};
   if (art.map && Object.keys(art.map).length) buildOptions.inputArt = art.map;
   if (deviceArt) buildOptions.deviceArt = deviceArt;
+  if (appColours.map && Object.keys(appColours.map).length) buildOptions.appColours = appColours.map;
   const candidate = builder.build(localStock, out, m.stock_sha256,
     Object.keys(buildOptions).length ? buildOptions : undefined);
   if (deviceArt) {
@@ -727,6 +800,7 @@ function parse(argv) {
   const positional = [];
   const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
     noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false,
+    appColoursFile: null,
     noRecord: false, noVerify: false, noDrift: false, help: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -742,6 +816,7 @@ function parse(argv) {
     else if (arg === '--no-verify') opts.noVerify = true;
     else if (arg === '--no-drift') opts.noDrift = true;
     else if (arg === '--input-art') opts.inputArtFile = args[++i];
+    else if (arg === '--app-colours') opts.appColoursFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--help') opts.help = true;
     else positional.push(arg);
@@ -787,4 +862,5 @@ if (require.main === module) {
 
 module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap, doctorCommand,
   applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
-  cleanInputArt, inputArtFromInputs, inputArtFromConfigText, inputArtFromFileText, readInputArt, INPUT_ART_ALLOWED };
+  cleanInputArt, inputArtFromInputs, inputArtFromConfigText, inputArtFromFileText, readInputArt, INPUT_ART_ALLOWED,
+  cleanAppColours, readAppColours, APP_COLOURS_MAX };

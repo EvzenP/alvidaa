@@ -8,7 +8,8 @@ const { hash, CONFIG } = require('./native-trial.cjs');
 const { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main,
   install, rollback, status, syncWatcher,
   applyWatcherConfig, watcherState, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
-  cleanInputArt, inputArtFromConfigText, inputArtFromFileText } = require('./native-install.cjs');
+  cleanInputArt, inputArtFromConfigText, inputArtFromFileText,
+  cleanAppColours, APP_COLOURS_MAX } = require('./native-install.cjs');
 
 const HERE = __dirname;
 const REPO = path.resolve(HERE, '../..');
@@ -847,4 +848,70 @@ test('doctor --help prints the usage and exits clean', () => {
 test('--help parses (doctor needs it through the subcommand shell)', () => {
   assert.equal(parse(['node', 'x', 'doctor', '--help']).opts.help, true);
   assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10']).opts.help, false);
+});
+
+// --- per-app tint (issue #56) -------------------------------------------------
+
+test('app colours: the flag parses, and cleanAppColours enforces basenames and #rrggbb', () => {
+  const parsed = parse(['node', 'x', 'install', 'alvidaa', '--model', '50a51huv',
+    '--host', '192.0.2.10', '--app-colours', '/tmp/colours.json']);
+  assert.equal(parsed.opts.appColoursFile, '/tmp/colours.json');
+  assert.equal(parse(['node', 'x', 'status']).opts.appColoursFile, null);
+  const good = cleanAppColours('{"netflix.png":"#B20710","plex.png":"#e5a00d"}');
+  assert.deepEqual(good.map, { 'netflix.png': '#b20710', 'plex.png': '#e5a00d' },
+    'values are normalised to lowercase, basename keys kept');
+  assert.deepEqual(good.warnings, []);
+  const mixed = cleanAppColours(JSON.stringify({
+    'ok.png': '#112233',
+    'full/path.png': '#112233',
+    'rgb.png': 'rgb(1,2,3)',
+    'short.png': '#fff',
+    '': '#112233'
+  }));
+  assert.deepEqual(mixed.map, { 'ok.png': '#112233' });
+  assert.equal(mixed.warnings.length, 4, 'every dropped entry is named');
+  const broken = cleanAppColours('{ oops');
+  assert.equal(broken.map, null);
+  assert.match(broken.error, /not valid JSON/);
+  assert.match(cleanAppColours('[]').error, /not a JSON object/);
+  const entries = {};
+  for (let i = 0; i < APP_COLOURS_MAX + 2; i++) entries['k' + i + '.png'] = '#112233';
+  const capped = cleanAppColours(JSON.stringify(entries));
+  assert.equal(Object.keys(capped.map).length, APP_COLOURS_MAX);
+  assert.equal(capped.warnings.length, 2, 'the overflow is named, not dropped silently');
+});
+
+test('app colours: install bakes the map into the builder; absent flag stays silent', t => {
+  const dir = fs.mkdtempSync('/tmp/alvidaa-app-colours-');
+  const file = path.join(dir, 'colours.json');
+  fs.writeFileSync(file, '{"netflix.png":"#b20710"}');
+  const logs = [];
+  const originalLog = console.log;
+  console.log = message => logs.push(String(message));
+  try {
+    const tv = watcherFixture(t);
+    let seen = 'not called';
+    const builder = stubBuildForWiring(t, (a, b, c, options) => { seen = options; });
+    install('alvidaa', { ssh: tv.ssh, sleep: () => {}, model: '50a51huv', builder, appColoursFile: file, noRecord: true });
+    assert.deepEqual(seen.appColours, { 'netflix.png': '#b20710' });
+    assert.ok(logs.some(l => /app colours: baked 1 icon tint/.test(l)), logs.join(' | '));
+
+    logs.length = 0;
+    const tvQuiet = watcherFixture(t);
+    let seenQuiet = 'not called';
+    const builderQuiet = stubBuildForWiring(t, (a, b, c, options) => { seenQuiet = options; });
+    install('alvidaa', { ssh: tvQuiet.ssh, sleep: () => {}, model: '50a51huv', builder: builderQuiet, noRecord: true });
+    assert.equal(seenQuiet.appColours, undefined, 'no flag, no key in the builder options');
+    assert.equal(logs.some(l => /app colours/.test(l)), false, 'and nothing is logged');
+
+    let seenMissing = 'not called';
+    const builderMissing = stubBuildForWiring(t, (a, b, c, options) => { seenMissing = options; });
+    const tvMissing = watcherFixture(t);
+    install('alvidaa', { ssh: tvMissing.ssh, sleep: () => {}, model: '50a51huv',
+      builder: builderMissing, appColoursFile: path.join(dir, 'nope.json'), noRecord: true });
+    assert.equal(seenMissing.appColours, undefined, 'an unreadable file still builds');
+    assert.ok(logs.some(l => /--app-colours file unreadable/.test(l) && /building without app colours/.test(l)),
+      'it says so on the note line: ' + logs.join(' | '));
+  } finally { console.log = originalLog; }
+  fs.rmSync(dir, { recursive: true, force: true });
 });

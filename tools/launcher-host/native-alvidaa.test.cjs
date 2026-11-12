@@ -1889,3 +1889,91 @@ test('groups: the grouped overlay renders headers and cells from one focus path'
   assert.equal(flat.filter(n => n.tag === 'img').length, 0, 'shapes and text only');
   v.stop();
 });
+
+// ---- per-app tint (issue #56) -----------------------------------------------
+
+const TINT_H = (tag, data, children) => ({ tag, data, children });
+
+test('app tint: no map no layer; with a map the layer mounts at opacity 0', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(flatten(f.component.render.call(v, TINT_H))
+    .some(n => n.data && n.data.attrs && n.data.attrs['data-app-tint']), false,
+    'no baked map, no tint layer at all');
+  f.root.AlvidaaNativeAppColours = { 'netflix.png': '#b20710' };
+  const tint = flatten(f.component.render.call(v, TINT_H))
+    .find(n => n.data && n.data.attrs && n.data.attrs['data-app-tint']);
+  assert.ok(tint, 'the layer mounts once the map is baked');
+  assert.equal(tint.data.style.opacity, 0, 'invisible until a favourite is focused');
+  v.stop();
+});
+
+test('app tint: focusing a favourite fades the wash toward its colour and back', () => {
+  const f = setup({ storage: { alvidaa_favorites: ['1'] } }), v = f.instance, k = KEYS;
+  f.root.AlvidaaNativeAppColours = { 'netflix.png': '#b20710' };
+  v.start();
+  assert.equal(v.appItems()[0].kind, 'favorite', 'the Netflix favourite is item 0');
+  v.zone = 'apps';
+  v.app = 0;
+  v.syncTint();
+  assert.equal(v.tintColour, '#b20710');
+  assert.equal(v.tintOpacity, 1);
+  const tint = flatten(f.component.render.call(v, TINT_H))
+    .find(n => n.data && n.data.attrs && n.data.attrs['data-app-tint']);
+  assert.equal(tint.data.style.backgroundColor, '#b20710');
+  assert.equal(tint.data.style.opacity, 0.22, 'a tint, never a wash-out');
+  assert.match(tint.data.style.transition, /opacity 350ms/);
+  assert.match(tint.data.style.transition, /background-color 350ms/,
+    'moving between two tinted favourites cross-fades the hue');
+  // The Apps door has no icon: the fade-out starts from the colour it was on.
+  v.app = 1;
+  v.syncTint();
+  assert.equal(v.tintOpacity, 0);
+  assert.equal(v.tintColour, '#b20710');
+  // And the dock keeps the plain wash.
+  v.zone = 'dock';
+  v.syncTint();
+  assert.equal(v.tintOpacity, 0);
+  // readPrefs re-reads the favourites the tint depends on.
+  f.store.set('alvidaa_favorites', []);
+  v.readPrefs();
+  assert.equal(v.tintOpacity, 0);
+  v.stop();
+});
+
+test('app tint: the component clamp is the guarantee, whatever the map says', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  f.root.AlvidaaNativeAppColours = {
+    'white.png': '#ffffff',
+    'red.png': '#b20710',
+    'named.png': 'red',
+    'rgb.png': 'rgb(1,2,3)',
+    'upper.png': '#B20710'
+  };
+  assert.equal(v.appColourFor('file:///x/white.png'), '#7f7f7f',
+    'a white icon is clamped even when the baked map forgot to cap it');
+  assert.equal(v.appColourFor('file:///x/red.png'), '#b20710');
+  assert.equal(v.appColourFor('file:///x/upper.png'), '#b20710', 'normalised to lowercase');
+  assert.equal(v.appColourFor('file:///x/named.png'), '');
+  assert.equal(v.appColourFor('file:///x/rgb.png'), '');
+  assert.equal(v.appColourFor(''), '');
+  assert.equal(v.appColourFor('https://img.vidaahub.com/plex.png'), '',
+    'no entry means the current background, not a guess');
+  v.stop();
+});
+
+test('the build bakes AlvidaaNativeAppColours when given, nothing when not', () => {
+  const { build } = require('./build-native-alvidaa.cjs');
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alvidaa-tint-build-'));
+  const stockFile = path.join(dir, 'stock.js');
+  const stock = '/* stock */\nself._V_M_ = { launcher: function () { return { route: [{ path: "/Launcher", component: {} }] }; } };\n';
+  fs.writeFileSync(stockFile, stock);
+  const digest = hash(Buffer.from(stock));
+  const plain = build(stockFile, null, digest);
+  assert.ok(!plain.includes('self.AlvidaaNativeAppColours='));
+  const tinted = build(stockFile, null, digest, { appColours: { 'netflix.png': '#b20710' } });
+  assert.ok(tinted.includes('self.AlvidaaNativeAppColours={"netflix.png":"#b20710"}'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

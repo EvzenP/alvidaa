@@ -34,6 +34,13 @@ function build(stockFile, output, expect, options) {
   if (deviceArt && typeof deviceArt === 'object' && deviceArt.icons) {
     art += '\nself.AlvidaaNativeDeviceArt=' + JSON.stringify(deviceArt) + ';';
   }
+  // Per-app tint (issue #56): dominant colours extracted host-side from the
+  // allowlisted icons (app-colours.cjs), keyed by icon basename. Absent when
+  // the pipeline had no icons, and the component keeps the plain wash.
+  const appColours = options && options.appColours;
+  if (appColours && typeof appColours === 'object' && Object.keys(appColours).length > 0) {
+    art += '\nself.AlvidaaNativeAppColours=' + JSON.stringify(appColours) + ';';
+  }
   const candidate = '/* ' + MARKER + '\n * variant: native-alvidaa.js\n */\n' + art + '\n' +
     stock + '\n;\n' +
     PARTS.map(file => fs.readFileSync(path.join(__dirname, file), 'utf8')).join('\n;\n');
