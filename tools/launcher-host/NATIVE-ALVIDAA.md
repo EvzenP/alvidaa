@@ -193,6 +193,38 @@ If you want zero network access, drop the vidaahub rule in `allowedIcon()`.
 Every app then falls back to its badge, which is the trade the first version
 made.
 
+### Groups in the apps overlay (issue #57)
+
+The reference TV reports 40 apps, so unset the overlay is a scroll, not a
+menu. `alvidaa_groups` in `sdk.storage` turns it into named sections:
+
+```json
+[{ "name": "Media", "apps": ["2", "1"] }, { "name": "Kids", "apps": ["7"] }]
+```
+
+- **Order is the array order**, for the groups and for the apps inside each
+  one — explicit curation outranks the recently-used heuristic.
+- **Other apps** is automatic: everything no group claims lands there, in the
+  recent/vendor order, so the long tail has a home without anyone curating
+  it. A group whose apps all fail to resolve (stale ids, hidden apps) renders
+  nothing rather than an empty header, and the first group to claim an app
+  wins — one app, one focus position.
+- **Navigation stays a single focus path** over the flattened groups:
+  Left/Right step within the group and stop at its ends; Up/Down step between
+  groups, landing on the same offset clamped to the target group's length; OK
+  opens the focused app. No second layer of focus.
+- **Unset or empty config means the flat grid, unchanged** — no headers, no
+  catch-all, the same flat behaviour as before this feature.
+- **There is no settings editor.** The storage key and the rendering are the
+  deliverable (issue #57); an editor row is future work. Until then the key
+  is written by hand into the bridge config or over the storage lane.
+
+The grouped render windows on the focused row like the flat grid does; a
+group header takes a full cell-height slot, so the paging math is the same.
+Launches still record recency and re-sort the ungrouped tail; the groups
+themselves re-resolve from config, so their members stay where the config
+put them.
+
 ### Preferences
 
 `native-alvidaa.js` reads — and, through the settings surface above, writes —
@@ -214,6 +246,7 @@ note that static custom names can go stale if the physical device changes.
 | `alvidaa_recent` | object | `{}` | Map of app id to last-launch epoch ms, pruned to the 40 newest; drives the overlay's recently-used ordering (issue #55). |
 | `alvidaa_recent_order` | boolean | `true` | When off, the apps overlay keeps vendor order and launches are not recorded. |
 | `alvidaa_favorites` | array of strings | `[]` | Pinned favorite app IDs in view 2 (max 5), launched directly. Stale IDs dropped silently. |
+| `alvidaa_groups` | array of `{name, apps}` | `[]` | Named groups for the apps overlay (issue #57); array order is the display order, apps inside a group follow the config array, everything unclaimed lands in the automatic "Other apps" group. Unset = flat grid. No settings editor — the key and the rendering are the deliverable. |
 
 ### Settings surface
 
@@ -506,5 +539,9 @@ Reset row, only-list rule, absent-storage no-ops, hotkey suppression, TTS
 labels), the idle screen (off by default, fade-in on the clock tick, the idle
 layer rendering wallpaper/clock/date and nothing else, every wake key consumed
 without activating, source-change cancel versus unchanged poll, launch cancel,
-the settings row round-trip, stop() cleanup), render structure and scaling,
+the settings row round-trip, stop() cleanup), the groups in the apps overlay
+(unset config keeps the flat grid, config-array rendering with the Other-apps
+catch-all, empty groups dropped, ordering against the vendor order,
+Left/Right within a group and Up/Down between them, OK launching the focused
+app, one focus path over the flattened list), render structure and scaling,
 the entry's variant selection, and the build's hash and output guards.

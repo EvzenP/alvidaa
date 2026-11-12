@@ -177,7 +177,7 @@
           prefs: {
             hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null,
             autoSwitch: false, recentOrder: true, recent: {}, favorites: [],
-            idleMinutes: 0
+            idleMinutes: 0, groups: []
           }
         };
       },
@@ -200,7 +200,8 @@
             recentOrder: isTruthy(readPref("alvidaa_recent_order", true)),
             recent: readPref("alvidaa_recent", {}),
             favorites: readPref("alvidaa_favorites", []),
-            idleMinutes: Number(readPref("alvidaa_idle_minutes", 0)) || 0
+            idleMinutes: Number(readPref("alvidaa_idle_minutes", 0)) || 0,
+            groups: readPref("alvidaa_groups", [])
           };
           if (this._lastData && this._lastData.apps) {
             this.apps = this.sortRecent(this.filterApps(this._lastData.apps));
@@ -485,12 +486,98 @@
           if (n <= DOCK_PAGE) return 0;
           return Math.max(0, Math.min(this.dock - 2, n - DOCK_PAGE));
         },
+        // --- groups in the apps overlay (issue #57) ---------------------------
+        //
+        // alvidaa_groups is an owner-curated array of { name, apps: [appId…] }
+        // in sdk.storage; order is the array order, both for the groups and
+        // for the apps inside each one — explicit curation outranks the
+        // recently-used heuristic. Everything no group claims lands in an
+        // automatic "Other apps" group, so the long tail has a home without
+        // anyone curating it. Unset or empty config means the flat grid,
+        // unchanged. There is no settings editor for this — the storage key
+        // and the rendering are the deliverable (issue #57).
+        appById: function (id) {
+          var key = String(id);
+          for (var i = 0; i < this.apps.length; i++) {
+            if (String(this.apps[i].appId) === key) return this.apps[i];
+          }
+          return null;
+        },
+        overlayGroups: function () {
+          var config = this.prefs && this.prefs.groups;
+          if (!Array.isArray(config) || !config.length) return null;
+          var lists = [], claimed = {};
+          for (var i = 0; i < config.length; i++) {
+            var entry = config[i];
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+            if (!text(entry.name)) continue;
+            var ids = Array.isArray(entry.apps) ? entry.apps : [];
+            var apps = [];
+            for (var j = 0; j < ids.length; j++) {
+              var app = this.appById(ids[j]);
+              // First group to claim an app wins: one app, one focus position.
+              if (app && !claimed[String(app.appId)]) {
+                claimed[String(app.appId)] = true;
+                apps.push(app);
+              }
+            }
+            // A group whose apps all fail to resolve (stale ids, hidden apps)
+            // renders nothing rather than an empty header.
+            if (apps.length) lists.push({ name: text(entry.name), apps: apps });
+          }
+          var rest = [];
+          for (var k = 0; k < this.apps.length; k++) {
+            if (!claimed[String(this.apps[k].appId)]) rest.push(this.apps[k]);
+          }
+          if (rest.length) lists.push({ name: "Other apps", apps: rest });
+          return lists.length ? lists : null;
+        },
+        // The list the overlay actually shows: the groups flattened, or the
+        // plain grid when no config is set. Every overlay-path reader of
+        // this.apps goes through here, so focus stays one linear path.
+        overlayList: function () {
+          var groups = this.overlayGroups();
+          if (!groups) return this.apps;
+          // Anchor on this.apps so the flattened list stays in the same realm
+          // as the list it re-orders (see sortRecent: the test harness runs
+          // the component in a vm and compares its arrays against host ones).
+          var out = this.apps.slice(0, 0);
+          for (var i = 0; i < groups.length; i++) out = out.concat(groups[i].apps);
+          return out;
+        },
+        // Group boundaries over overlayList(): where each group starts and how
+        // long it runs. Null when the flat grid is showing.
+        overlaySpans: function () {
+          var groups = this.overlayGroups();
+          if (!groups) return null;
+          var spans = [], start = 0;
+          for (var i = 0; i < groups.length; i++) {
+            spans.push({ name: groups[i].name, start: start, count: groups[i].apps.length });
+            start += groups[i].apps.length;
+          }
+          return spans;
+        },
+        // Visual rows for the grouped render: a header slot per group, then
+        // its apps chunked into OVERLAY_COLS-wide rows. Null when flat.
+        overlayLayout: function () {
+          var groups = this.overlayGroups();
+          if (!groups) return null;
+          var rows = [], index = 0;
+          for (var g = 0; g < groups.length; g++) {
+            rows.push({ header: groups[g].name });
+            for (var i = 0; i < groups[g].apps.length; i += OVERLAY_COLS) {
+              rows.push({ cells: groups[g].apps.slice(i, i + OVERLAY_COLS), start: index + i });
+            }
+            index += groups[g].apps.length;
+          }
+          return rows;
+        },
         clamp: function () {
           var dockLen = this.dockItems().length;
           this.dock = dockLen > 0 ? Math.max(0, Math.min(this.dock, dockLen - 1)) : 0;
           var appLen = this.appItems().length;
           this.app = appLen > 0 ? Math.max(0, Math.min(this.app, appLen - 1)) : 0;
-          var overlayLen = this.apps.length;
+          var overlayLen = this.overlayList().length;
           this.overlayIndex = overlayLen > 0 ? Math.max(0, Math.min(this.overlayIndex, overlayLen - 1)) : 0;
           if (this.settings) {
             if (this.settingsPage === "name") {
@@ -1030,7 +1117,7 @@
           }
         },
         launchFocused: function () {
-          var vm = this, app = this.apps[this.overlayIndex];
+          var vm = this, app = this.overlayList()[this.overlayIndex];
           if (!app) return;
           this.cancelIdle();
           this.showToast("Opening " + (app.appName || "app") + "…");
@@ -1049,7 +1136,7 @@
               label = row && (row.speak || row.label);
             }
           } else if (this.overlay) {
-            var app = this.apps[this.overlayIndex];
+            var app = this.overlayList()[this.overlayIndex];
             label = app && app.appName;
           } else if (this.zone === "dock") {
             var input = this.dockItems()[this.dock];
@@ -1081,6 +1168,39 @@
           if (this.overlay) {
             if (code === keys.BACK || code === keys.RETURN) { this.closeOverlay(); return true; }
             if (code === keys.ENTER) { this.launchFocused(); return true; }
+            var spans = this.overlaySpans();
+            if (spans) {
+              // Grouped navigation (issue #57): still one focus path over the
+              // flattened groups. Left/Right step within the group and stop at
+              // its ends; Up/Down step between groups, landing on the same
+              // offset clamped to the target group's length. Every key here is
+              // consumed, even when it cannot move.
+              var group = 0, offset = 0;
+              for (var s = 0; s < spans.length; s++) {
+                if (this.overlayIndex < spans[s].start + spans[s].count) {
+                  group = s;
+                  offset = this.overlayIndex - spans[s].start;
+                  break;
+                }
+              }
+              if (code === keys.LEFT) { if (offset > 0) this.overlayIndex--; }
+              else if (code === keys.RIGHT) { if (offset < spans[group].count - 1) this.overlayIndex++; }
+              else if (code === keys.UP) {
+                if (group > 0) {
+                  var up = spans[group - 1];
+                  this.overlayIndex = up.start + Math.min(offset, up.count - 1);
+                }
+              }
+              else if (code === keys.DOWN) {
+                if (group < spans.length - 1) {
+                  var down = spans[group + 1];
+                  this.overlayIndex = down.start + Math.min(offset, down.count - 1);
+                }
+              }
+              else return false;
+              this.clamp();
+              return true;
+            }
             if (code === keys.LEFT) this.overlayIndex--;
             else if (code === keys.RIGHT) this.overlayIndex++;
             else if (code === keys.UP) this.overlayIndex -= OVERLAY_COLS;
@@ -1279,6 +1399,53 @@
             out.push(bar(cx - 15, 26, 30, 2));
           }
           return out.map(function (style) { return h("div", { style: style }); });
+        }
+
+        // One overlay cell builder for both layouts: the flat grid and, when
+        // alvidaa_groups is configured, the grouped sections. Same tile, same
+        // icon policy, same click behaviour; only the position and the focused
+        // index differ per call site.
+        function overlayCell(app, selected, index, x, y, cellW) {
+          var icon = vm.appIcon(app);
+          var cell = [];
+          if (icon) {
+            // backgroundImage, not an img node: the img path did not paint
+            // cached icons on the Cobalt builds this was tested against.
+            cell.push(h("div", { style: box(0, 20, cellW - 16, ICON, {
+              backgroundImage: "url(" + JSON.stringify(icon) + ")",
+              backgroundSize: "contain", backgroundPosition: "center",
+              backgroundRepeat: "no-repeat"
+            }) }));
+          } else {
+            var badge = brand(app.appName);
+            cell.push(h("div", { style: box((cellW - 16 - ICON) / 2, 20, ICON, ICON, {
+              borderRadius: 20, backgroundColor: badge, overflow: "hidden"
+            }) }, [
+              h("div", { style: box(0, 0, ICON, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
+              h("div", { style: box(0, 0, ICON, ICON, {
+                fontSize: 38, lineHeight: ICON, textAlign: "center",
+                fontWeight: "700", color: "#ffffff"
+              }) }, [String(app.appName || "?").charAt(0).toUpperCase()])
+            ]));
+          }
+          var name = String(app.appName || "");
+          if (name.length > 20) name = name.slice(0, 19) + "\u2026";
+          cell.push(h("div", { style: box(0, OVERLAY_CELL - 56, cellW - 16, 34, {
+            fontSize: 22, lineHeight: 34, textAlign: "center",
+            color: selected ? "#f8fafc" : "#94a3b8"
+          }) }, [name]));
+          return h("div", {
+            attrs: { role: "button", "aria-label": String(app.appName || ""), tabindex: selected ? "0" : "-1" },
+            style: box(x + 8, y + 8, cellW - 16, OVERLAY_CELL - 24, {
+              borderRadius: 28,
+              backgroundColor: selected ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
+              border: selected ? "2px solid #ffffff" : "2px solid rgba(255,255,255,0)",
+              overflow: "hidden"
+            }),
+            on: { click: function (i) {
+              return function () { vm.overlayIndex = i; vm.launchFocused(); };
+            }(index) }
+          }, cell);
         }
 
         var nodes = [];
@@ -1576,8 +1743,6 @@
   // panel-relative coordinates, which is why it never showed this.
   var panelX = 64, panelY = 140, panelW = 1792, panelH = 800;
           var rows = Math.max(1, Math.floor((panelH - 96) / OVERLAY_CELL));
-          var firstRow = Math.max(0, Math.floor(this.overlayIndex / OVERLAY_COLS) - rows + 1);
-          var first = firstRow * OVERLAY_COLS;
           var cellW = (panelW - 112) / OVERLAY_COLS;
           var panel = [
             h("div", { style: box(56, 40, null, null, {
@@ -1587,58 +1752,50 @@
               fontSize: 18, lineHeight: 24, textAlign: "right", color: "#475569"
             }) }, ["OK to open \u00b7 BACK to close"])
           ];
+          var layout = this.overlayLayout();
           if (!this.apps.length) {
             panel.push(h("div", { style: box(56, 112, null, null, {
               fontSize: 28, lineHeight: 32, color: "#475569"
             }) }, ["no apps reported"]));
-          }
-          for (var a = first; a < this.apps.length; a++) {
-            var row = Math.floor((a - first) / OVERLAY_COLS), col = a % OVERLAY_COLS;
-            if (row >= rows) break;
-            var app = this.apps[a];
-            var selected = this.overlayIndex === a;
-            var cellX = 56 + col * cellW;
-            var cellY = 96 + row * OVERLAY_CELL;
-            var icon = this.appIcon(app);
-            var cell = [];
-            if (icon) {
-              // backgroundImage, not an img node: the img path did not paint
-              // cached icons on the Cobalt builds this was tested against.
-              cell.push(h("div", { style: box(0, 20, cellW - 16, ICON, {
-                backgroundImage: "url(" + JSON.stringify(icon) + ")",
-                backgroundSize: "contain", backgroundPosition: "center",
-                backgroundRepeat: "no-repeat"
-              }) }));
-            } else {
-              var badge = brand(app.appName);
-              cell.push(h("div", { style: box((cellW - 16 - ICON) / 2, 20, ICON, ICON, {
-                borderRadius: 20, backgroundColor: badge, overflow: "hidden"
-              }) }, [
-                h("div", { style: box(0, 0, ICON, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
-                h("div", { style: box(0, 0, ICON, ICON, {
-                  fontSize: 38, lineHeight: ICON, textAlign: "center",
-                  fontWeight: "700", color: "#ffffff"
-                }) }, [String(app.appName || "?").charAt(0).toUpperCase()])
-              ]));
+          } else if (!layout) {
+            // Unset config (issue #57): the flat grid, unchanged.
+            var firstRow = Math.max(0, Math.floor(this.overlayIndex / OVERLAY_COLS) - rows + 1);
+            var first = firstRow * OVERLAY_COLS;
+            for (var a = first; a < this.apps.length; a++) {
+              var row = Math.floor((a - first) / OVERLAY_COLS), col = a % OVERLAY_COLS;
+              if (row >= rows) break;
+              panel.push(overlayCell(this.apps[a], this.overlayIndex === a, a,
+                56 + col * cellW, 96 + row * OVERLAY_CELL, cellW));
             }
-            var name = String(app.appName || "");
-            if (name.length > 20) name = name.slice(0, 19) + "\u2026";
-            cell.push(h("div", { style: box(0, OVERLAY_CELL - 56, cellW - 16, 34, {
-              fontSize: 22, lineHeight: 34, textAlign: "center",
-              color: selected ? "#f8fafc" : "#94a3b8"
-            }) }, [name]));
-            panel.push(h("div", {
-              attrs: { role: "button", "aria-label": String(app.appName || ""), tabindex: selected ? "0" : "-1" },
-              style: box(cellX + 8, cellY + 8, cellW - 16, OVERLAY_CELL - 24, {
-                borderRadius: 28,
-                backgroundColor: selected ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
-                border: selected ? "2px solid #ffffff" : "2px solid rgba(255,255,255,0)",
-                overflow: "hidden"
-              }),
-              on: { click: function (index) {
-                return function () { vm.overlayIndex = index; vm.launchFocused(); };
-              }(a) }
-            }, cell));
+          } else {
+            // Configured groups (issue #57): header slots between cell rows,
+            // one focus path over the flattened list, windowed on the focused
+            // row. A header takes a full cell-height slot so the paging math
+            // stays the same as the flat grid's.
+            var focusedRow = 0;
+            for (var lr = 0; lr < layout.length; lr++) {
+              if (layout[lr].cells && this.overlayIndex >= layout[lr].start &&
+                  this.overlayIndex < layout[lr].start + layout[lr].cells.length) {
+                focusedRow = lr;
+                break;
+              }
+            }
+            var gFirst = Math.max(0, focusedRow - rows + 1);
+            for (var vr = gFirst; vr < layout.length && vr < gFirst + rows; vr++) {
+              var slot = layout[vr];
+              var slotY = 96 + (vr - gFirst) * OVERLAY_CELL;
+              if (slot.header) {
+                panel.push(h("div", { style: box(56, slotY + 6, panelW - 112, 24, {
+                  fontSize: 18, lineHeight: 24, fontWeight: "600",
+                  letterSpacing: "1px", color: "#64748b"
+                }) }, [slot.header]));
+              } else {
+                for (var cc = 0; cc < slot.cells.length; cc++) {
+                  panel.push(overlayCell(slot.cells[cc], this.overlayIndex === slot.start + cc,
+                    slot.start + cc, 56 + cc * cellW, slotY, cellW));
+                }
+              }
+            }
           }
           layers.push(h("div", { style: {
             position: "absolute", left: "0", top: "0", width: "100%", height: "100%",

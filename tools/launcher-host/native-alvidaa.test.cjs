@@ -1767,3 +1767,125 @@ test('idle: stop() clears the layer, the deadline and the fade timer', () => {
   assert.equal(v.idleAt, 0);
   assert.equal(f.timeouts.size, 0, 'the fade timer is cleaned up');
 });
+
+// ---- groups in the apps overlay (issue #57) ----------------------------------
+
+test('groups: unset config keeps the flat grid exactly as before', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  assert.equal(v.overlayGroups(), null, 'no config means no groups');
+  assert.equal(v.overlaySpans(), null);
+  v.apps = Array.from({ length: 12 }, (_, i) => ({ appId: String(i), appName: 'App ' + i }));
+  v.overlay = true;
+  v.overlayIndex = 0;
+  v.handleKey(k.DOWN);
+  assert.equal(v.overlayIndex, 6, 'Up/Down still steps a full flat row');
+  v.handleKey(k.UP);
+  assert.equal(v.overlayIndex, 0);
+  assert.equal(v.overlayList(), v.apps, 'the shown list is the app list itself');
+  const texts = flatten(f.component.render.call(v, (tag, data, children) =>
+    ({ tag, data, children }))).flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.equal(texts.includes('Other apps'), false, 'no catch-all header on the flat grid');
+  v.stop();
+});
+
+test('groups: rendering follows the config array with an Other apps catch-all', () => {
+  const f = setup({ storage: { alvidaa_groups: [
+    { name: 'Media', apps: ['1'] },
+    { name: 'Games', apps: ['stale-9'] }
+  ] } }), v = f.instance;
+  v.start();
+  v.overlay = true;
+  v.overlayIndex = 0;
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const texts = flatten(draw()).flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('Media'), 'the configured group renders its header');
+  assert.ok(texts.includes('Other apps'), 'the long tail gets a home without curation');
+  assert.equal(texts.includes('Games'), false,
+    'a group whose apps all fail to resolve renders nothing, not an empty header');
+  assert.ok(texts.includes('Netflix') && texts.includes('Plex'));
+  assert.equal(v.overlayList().length, 2, 'Netflix grouped, Plex caught by Other');
+  assert.deepEqual(v.overlayList().map(a => a.appId), ['1', '2'],
+    'group members first in config order, then the catch-all');
+  v.stop();
+});
+
+test('groups: ordering follows the config array, against the vendor order', () => {
+  const f = setup({ storage: { alvidaa_groups: [
+    { name: 'Media', apps: ['2', '1'] }
+  ] } }), v = f.instance;
+  v.start();
+  assert.deepEqual(v.apps.map(a => a.appId), ['1', '2'], 'vendor order untouched');
+  assert.deepEqual(v.overlayList().map(a => a.appId), ['2', '1'],
+    'the group lists Plex before Netflix because the config says so');
+  const texts = flatten(f.component.render.call(v, (tag, data, children) =>
+    ({ tag, data, children }))).flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.equal(texts.includes('Other apps'), false,
+    'every app is claimed, so there is no catch-all');
+  v.stop();
+});
+
+test('groups: Left/Right stay in the group, Up/Down step between groups, OK launches', () => {
+  const f = setup(), v = f.instance, k = KEYS;
+  v.start();
+  v.apps = ['a', 'b', 'c', 'd', 'e'].map(id => ({ appId: id, appName: 'App ' + id }));
+  v.prefs.groups = [{ name: 'First', apps: ['a', 'b'] }, { name: 'Second', apps: ['c', 'd', 'e'] }];
+  v.overlay = true;
+  v.overlayIndex = 0; // a
+  v.handleKey(k.RIGHT);
+  assert.equal(v.overlayIndex, 1, 'b');
+  v.handleKey(k.RIGHT);
+  assert.equal(v.overlayIndex, 1, 'Right stops at the group end');
+  v.handleKey(k.DOWN);
+  assert.equal(v.overlayIndex, 3, 'into Second at the same offset, clamped (d)');
+  v.handleKey(k.RIGHT);
+  assert.equal(v.overlayIndex, 4, 'e');
+  v.handleKey(k.RIGHT);
+  assert.equal(v.overlayIndex, 4, 'and stops at the last app of the last group');
+  v.handleKey(k.ENTER);
+  assert.deepEqual(f.calls.at(-1), ['launch', 'e'], 'OK opens the focused app');
+  assert.equal(v.overlay, false, 'the launch closes the overlay');
+  // Back in: the groups pin their members by config order, so the flattened
+  // list and the focus position survive the launch's recency re-sort.
+  v.overlay = true;
+  v.overlayIndex = 4; // e, last of Second
+  v.handleKey(k.LEFT);
+  assert.equal(v.overlayIndex, 3, 'd');
+  v.handleKey(k.LEFT);
+  assert.equal(v.overlayIndex, 2, 'c');
+  v.handleKey(k.LEFT);
+  assert.equal(v.overlayIndex, 2, 'Left stops at the group start');
+  v.handleKey(k.UP);
+  assert.equal(v.overlayIndex, 0, 'back into First at the same offset (a)');
+  v.handleKey(k.UP);
+  assert.equal(v.overlayIndex, 0, 'Up at the first group stays put, still consumed');
+  v.handleKey(k.DOWN);
+  assert.equal(v.overlayIndex, 2, 'Down lands at Second start for offset 0');
+  v.stop();
+});
+
+test('groups: the grouped overlay renders headers and cells from one focus path', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.apps = ['a', 'b', 'c', 'd'].map(id => ({ appId: id, appName: 'App ' + id }));
+  v.prefs.groups = [{ name: 'First', apps: ['a', 'b', 'c'] }, { name: 'Second', apps: ['d'] }];
+  v.overlay = true;
+  v.overlayIndex = 2; // c, second row of First
+  const tree = f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const flat = flatten(tree);
+  const texts = flat.flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('First') && texts.includes('Second'), 'both headers render');
+  // Scope to the overlay panel: the dock keeps rendering underneath it, and
+  // its tiles are role=button too.
+  const panel = flat.find(n => n.data && n.data.style &&
+    n.data.style.borderRadius === '48px' && n.data.style.backgroundColor === 'rgba(14,18,26,0.97)');
+  assert.ok(panel, 'the overlay panel renders');
+  const cells = flatten(panel).filter(n => n.data && n.data.attrs &&
+    n.data.attrs.role === 'button' && n.data.style.borderRadius === '28px');
+  assert.equal(cells.length, 4, 'all four apps render as overlay cells');
+  // The focused cell is c: white border, non-focused siblings keep the quiet fill.
+  assert.equal(cells.filter(n => n.data.style.border === '2px solid #ffffff').length, 1,
+    'exactly one focused cell — a single focus path');
+  assert.equal(flat.filter(n => n.tag === 'img').length, 0, 'shapes and text only');
+  v.stop();
+});
