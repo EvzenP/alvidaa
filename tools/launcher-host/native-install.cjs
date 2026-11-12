@@ -509,6 +509,57 @@ function readInputArt(opts) {
   }
 }
 
+// --- the safety net the two new modules provide -----------------------------
+//
+// recovery-record captures what the TV looked like before we touched it, and
+// verify-install proves afterwards that the thing now running is the thing we
+// installed. Both are side concerns: a failure to record is loud but never
+// blocks an install, and a failed verification reports the TV's real state
+// rather than pretending the switch did not happen.
+
+function recordBefore(opts, m, what) {
+  if (opts.dryRun || opts.noRecord) return null;
+  try {
+    const rr = require('./recovery-record.cjs');
+    const rec = rr.record({ transport: rr.sshTransport(opts), model: opts.model });
+    console.log('recovery record: ' + (rec && rec.key ? rec.key : 'written') +
+      ' (pre-' + what + ' state captured)');
+    return rec;
+  } catch (error) {
+    console.warn('WARNING: could not write the host-side recovery record: ' + error.message +
+      '\n  The TV-side backup is unaffected; this only costs the second copy.');
+    return null;
+  }
+}
+
+function previousEnginePid(opts, m) {
+  if (opts.dryRun) return undefined;
+  try {
+    const { engineScan } = require('./deploy-check.cjs');
+    const out = String(sshFn(opts)(opts, 'export PATH=/bin:/usr/bin:/sbin:/usr/bin; ' + engineScan(m.engine))).trim();
+    return out ? Number(out.split(/\s+/)[0]) : undefined;
+  } catch (_) { return undefined; }
+}
+
+async function verifyStep(opts, m, expected, what) {
+  if (opts.dryRun || opts.noVerify) return;
+  try {
+    const { verifyAfter } = require('./verify-install.cjs');
+    const { sshRemote } = require('./deploy-check.cjs');
+    const result = await verifyAfter({ transport: sshRemote(opts), model: m, expected });
+    for (const line of result.lines || []) console.log(line);
+    if (!result.ok) {
+      throw new Error('the ' + what + ' bundle IS in place (the switch reported OK), but verification failed:\n' +
+        '  ' + (result.verdict || 'see the checks above') + '\n' +
+        'TV state: the switch completed; the checks above say what is actually running.\n' +
+        'Run rollback if the native Home is not what you want on screen.');
+    }
+  } catch (error) {
+    if (/IS in place/.test(error.message)) throw error;
+    console.warn('WARNING: could not verify the install: ' + error.message);
+  }
+}
+
 function install(id, opts) {
   const v = variant(id);
   const m = model(opts.model);
@@ -546,6 +597,9 @@ function install(id, opts) {
   }
   console.log('built ' + v.name + ': ' + Buffer.byteLength(candidate) + ' bytes, sha256 ' + hash(candidate));
 
+  // Before the first byte lands on the TV: capture the pristine state.
+  recordBefore(opts, m, 'install');
+
   if (!opts.dryRun) {
     const probe = sshFn(opts)(opts, 'export PATH=/bin:/usr/bin:/sbin:/usr/bin; test -f ' + m.state + '/switch-home.sh && echo yes || echo no');
     if (String(probe).trim() !== 'yes') bootstrap(opts, m);
@@ -560,16 +614,20 @@ function install(id, opts) {
   // install when the bundle is stock, switch when another variant is in place.
   const mode = opts.dryRun ? 'install' : (currentMd5(opts, m) === m.stock_md5 ? 'install' : 'switch');
   console.log('mode: ' + mode);
+  const previousPid = previousEnginePid(opts, m);
   runSwitch(opts, m, mode);
   if (!opts.dryRun) console.log(v.name + ' is installed on ' + m.name);
   watcherStep(opts, m, 'disable', v.name);
+  return verifyStep(opts, m, { md5, kind: 'candidate', previousPid }, v.name);
 }
 
 function rollback(opts) {
   const m = model(opts.model);
+  const previousPid = previousEnginePid(opts, m);
   runSwitch(opts, m, 'rollback');
   console.log('stock restored on ' + m.name);
   watcherStep(opts, m, 'restore', 'stock');
+  return verifyStep(opts, m, { md5: m.stock_md5, kind: 'stock', previousPid }, 'stock');
 }
 
 // Read-only: what the live config says about the watcher. Anything missing or
@@ -612,7 +670,8 @@ function parse(argv) {
   const command = args.shift();
   const positional = [];
   const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
-    noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false };
+    noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false,
+    noRecord: false, noVerify: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--model') opts.model = args[++i];
@@ -623,6 +682,8 @@ function parse(argv) {
     else if (arg === '--no-watcher') opts.noWatcher = true;
     else if (arg === '--no-input-art') opts.noInputArt = true;
     else if (arg === '--no-device-art') opts.noDeviceArt = true;
+    else if (arg === '--no-record') opts.noRecord = true;
+    else if (arg === '--no-verify') opts.noVerify = true;
     else if (arg === '--input-art') opts.inputArtFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
     else positional.push(arg);
@@ -654,8 +715,11 @@ function main(argv) {
 }
 
 if (require.main === module) {
-  try { main(process.argv); }
-  catch (error) { console.error('error: ' + error.message); process.exit(1); }
+  // install() and rollback() now end in an async verification step, so the
+  // entry point has to await the result rather than only catching throws.
+  Promise.resolve()
+    .then(() => main(process.argv))
+    .catch(error => { console.error('error: ' + error.message); process.exit(1); });
 }
 
 module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap,

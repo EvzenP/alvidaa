@@ -750,3 +750,13 @@ test('input art: the local-file reader accepts a map or a saved bridge config', 
   assert.equal(arr.map, null);
   assert.match(arr.note, /not a JSON object/);
 });
+
+test('--no-record and --no-verify parse, and both are off by default', () => {
+  const plain = parse(['node', 'x', 'install', 'alvidaa', '--model', '50a51huv', '--host', '192.0.2.10']);
+  assert.equal(plain.opts.noRecord, false);
+  assert.equal(plain.opts.noVerify, false);
+  const off = parse(['node', 'x', 'install', 'alvidaa', '--model', '50a51huv',
+    '--host', '192.0.2.10', '--no-record', '--no-verify']);
+  assert.equal(off.opts.noRecord, true);
+  assert.equal(off.opts.noVerify, true);
+});
