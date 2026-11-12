@@ -232,7 +232,13 @@ function checkArp(ctx) {
   }
   if (!arp) {
     ctx.arp = null;
-    observe(ctx, 'arp', 'FAIL', 'no ARP entry for ' + ctx.opts.host + ' (probed: one ignored ping to populate the cache)');
+    // Evidence, not a verdict: a missing entry only means "this host did not
+    // answer ARP just now", which is equally true of a wrong address and of a
+    // cache that has not settled. The lane check decides; this line must not
+    // read as a failure on a TV that is answering ssh (measured 2026-11-12:
+    // FAIL arp alongside PASS lane on a healthy unit).
+    observe(ctx, 'arp', 'SKIP', 'no ARP entry for ' + ctx.opts.host +
+      ' after one ignored ping — the lane check decides whether that matters');
     return;
   }
   ctx.arp = arp;
