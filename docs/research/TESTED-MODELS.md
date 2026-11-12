@@ -39,6 +39,7 @@ builds.
 | 32A35HUV | CAN | MTK9602 | U09.01 | V0000.09.01O.P0814 | 3290 | Chromium 111 | working | achieved | [@EmoFa](https://github.com/EmoFa) |
 | 50A7HAU (internal 50A6GA) | AU (Australia) | MTK9602 | U06.12 | V0000.06.12X.N1212 | 3290 | Chromium 88.0.4324.182 (armv7l) | untested | untested | [@gonzule](https://github.com/gonzule) |
 | 55E75LEVS | EU_A (BIH) | MTK9618 (mt5879; aarch64 kernel, armhf userland) | U09.61 | V0000.09.61B.Q0704 | 3290 | Chromium 111 "odin" (ViewPort/5.2.20, aarch64 UA) | working | achieved | [@mustafaGlobal](https://github.com/mustafaGlobal) |
+| 50C350LS (Toshiba OEM, brand=tos) | SA/Brazil | MTK9602 | U09.09 | V0000.09.09M.P1124 | 3290 | Chromium 111 "odin" | untested | achieved | [@lobobg8-hub](https://github.com/lobobg8-hub) |
 <!-- INVENTORY:END -->
 
 ## What each token means on each unit
