@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { hash, CONFIG } = require('./native-trial.cjs');
-const { VARIANTS, MODELS, variant, model, verified, checkPair, parse,
+const { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main,
   install, rollback, status, syncWatcher,
   applyWatcherConfig, watcherState, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
   cleanInputArt, inputArtFromConfigText, inputArtFromFileText } = require('./native-install.cjs');
@@ -785,4 +785,66 @@ test('--no-record and --no-verify parse, and both are off by default', () => {
 test('--no-drift parses, and is off by default', () => {
   assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10']).opts.noDrift, false);
   assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10', '--no-drift']).opts.noDrift, true);
+});
+
+/* ---- doctor (issue #52): the subcommand shell ----------------------------- */
+
+// The diagnosis itself is doctor.test.cjs's; these cover the subcommand
+// surface: routing, the flags it passes through, and the exit contract that
+// native-install's require.main catch (exit 1 for every throw) cannot carry.
+const doctor = require('./doctor.cjs');
+
+const doctorDeps = () => ({
+  transport: {
+    exec(cmd) {
+      if (cmd === 'echo doctor-lane-ok') throw new Error(
+        'ssh failed: ssh: connect to host 192.0.2.10 port 2222: Operation timed out');
+      throw new Error('fake tv: unhandled command: ' + cmd);
+    },
+    readFile(p) { throw new Error('cannot read ' + p + ' over ssh (status 1)'); }
+  },
+  arpLookup: () => ({ mac: 'bc:5c:17:bc:46:88' }),
+  pathProbe: () => '/bin:/usr/bin:/sbin:/usr/local/bin',
+  hostProcesses: () => []
+});
+
+test('doctor routes through main with the flags it needs and returns the exit code', () => {
+  const logs = [];
+  const original = console.log;
+  console.log = message => logs.push(String(message));
+  let code;
+  try {
+    code = main(['node', 'x', 'doctor', '--model', '50a51huv', '--host', '192.0.2.10',
+      '--port', '2222', '--key', 'k'], doctorDeps());
+  } finally { console.log = original; }
+  assert.equal(code, doctor.EXIT.ANSWER);
+  assert.ok(logs.some(l => /likely cause: napping/.test(l)), logs.join('\n'));
+  assert.ok(logs.some(l => l.startsWith('next: ')), logs.join('\n'));
+});
+
+test('doctor with missing flags: exit 2 with the usage on stderr, not a throw', () => {
+  const errLines = [];
+  const original = console.error;
+  console.error = (...a) => errLines.push(a.join(' '));
+  let code;
+  try { code = main(['node', 'x', 'doctor', '--model', '50a51huv']); }
+  finally { console.error = original; }
+  assert.equal(code, doctor.EXIT.USAGE);
+  assert.ok(errLines.some(l => l.includes('--host')), errLines.join('\n'));
+});
+
+test('doctor --help prints the usage and exits clean', () => {
+  const logs = [];
+  const original = console.log;
+  console.log = message => logs.push(String(message));
+  let code;
+  try { code = main(['node', 'x', 'doctor', '--help']); }
+  finally { console.log = original; }
+  assert.equal(code, doctor.EXIT.ANSWER);
+  assert.match(logs[0], /^usage:/);
+});
+
+test('--help parses (doctor needs it through the subcommand shell)', () => {
+  assert.equal(parse(['node', 'x', 'doctor', '--help']).opts.help, true);
+  assert.equal(parse(['node', 'x', 'status', '--model', '50a51huv', '--host', '192.0.2.10']).opts.help, false);
 });

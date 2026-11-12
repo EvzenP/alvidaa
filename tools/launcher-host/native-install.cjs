@@ -7,6 +7,7 @@
  *       [--no-input-art] [--input-art <file.json>] [--no-device-art]
  *   node native-install.cjs rollback --model <id> --host <ip> [--no-watcher]
  *   node native-install.cjs status   --model <id> --host <ip>
+ *   node native-install.cjs doctor   --model <id> --host <ip>   (read-only diagnosis, issue #52)
  *
  * Why a CLI and not a page on the TV: lane 3 replaces the thing a picker would
  * live in. If a variant renders badly, a picker inside the native Home is
@@ -680,6 +681,32 @@ function status(opts) {
   }
 }
 
+// doctor — the five failures every owner hits, diagnosed read-only (issue
+// #52). The analysis lives in doctor.cjs; this is the subcommand shell: flags
+// through, exit code back. doctor's exit contract (0 when it has an answer,
+// even "the TV is asleep"; 2 on usage) cannot ride this module's require.main
+// catch, which exits 1 for every throw — so the code is returned and the
+// caller decides.
+function doctorCommand(opts, deps = {}) {
+  const doctor = require('./doctor.cjs');
+  // doctor.parse slices past node and the script name — no 'doctor' token
+  // here, or it would arrive as an unknown flag.
+  const argv = ['node', 'doctor.cjs'];
+  if (opts.help) argv.push('--help');
+  if (opts.model) argv.push('--model', opts.model);
+  if (opts.host) argv.push('--host', opts.host);
+  if (opts.port) argv.push('--port', String(opts.port));
+  if (opts.key) argv.push('--key', opts.key);
+  try {
+    return doctor.main(argv, deps);
+  } catch (error) {
+    if (!error.usage) throw error;
+    console.error('usage: ' + error.message);
+    console.error('       (see: node tools/launcher-host/native-install.cjs doctor --help)');
+    return doctor.EXIT.USAGE;
+  }
+}
+
 function list() {
   console.log('variants');
   for (const v of VARIANTS.variants) {
@@ -700,7 +727,7 @@ function parse(argv) {
   const positional = [];
   const opts = { port: 2222, key: path.join(REPO, 'server/keys/tv_root_ed25519'), dryRun: false, force: false,
     noWatcher: false, noInputArt: false, inputArtFile: null, noDeviceArt: false,
-    noRecord: false, noVerify: false, noDrift: false };
+    noRecord: false, noVerify: false, noDrift: false, help: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--model') opts.model = args[++i];
@@ -716,12 +743,13 @@ function parse(argv) {
     else if (arg === '--no-drift') opts.noDrift = true;
     else if (arg === '--input-art') opts.inputArtFile = args[++i];
     else if (arg === '--dry-run') opts.dryRun = true;
+    else if (arg === '--help') opts.help = true;
     else positional.push(arg);
   }
   return { command, positional, opts };
 }
 
-function main(argv) {
+function main(argv, deps = {}) {
   const { command, positional, opts } = parse(argv);
   if (command === 'list' || !command) return list();
   if (command === 'install') {
@@ -741,17 +769,22 @@ function main(argv) {
     assert.ok(opts.model && opts.host, '--model and --host are required');
     return bootstrap(opts, model(opts.model));
   }
+  // doctor carries its own exit contract (0 with an answer, 2 on usage), so
+  // it validates its own flags and returns the code instead of asserting.
+  if (command === 'doctor') return doctorCommand(opts, deps);
   throw new Error('unknown command: ' + command);
 }
 
 if (require.main === module) {
   // install() and rollback() now end in an async verification step, so the
   // entry point has to await the result rather than only catching throws.
+  // doctor returns an exit code (0/2); the other commands return nothing.
   Promise.resolve()
     .then(() => main(process.argv))
+    .then(code => { if (Number.isInteger(code)) process.exit(code); })
     .catch(error => { console.error('error: ' + error.message); process.exit(1); });
 }
 
-module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap,
+module.exports = { VARIANTS, MODELS, variant, model, verified, checkPair, parse, main, install, rollback, status, bootstrap, doctorCommand,
   applyWatcherConfig, watcherState, watcherStatus, syncWatcher, WATCHER_BACKUP, WATCHER_BACKUP_LEGACY,
   cleanInputArt, inputArtFromInputs, inputArtFromConfigText, inputArtFromFileText, readInputArt, INPUT_ART_ALLOWED };
