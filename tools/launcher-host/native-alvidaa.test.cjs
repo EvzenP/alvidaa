@@ -1282,7 +1282,7 @@ test('settings: the only-list row appears only when set and OK clears it', () =>
   w.start();
   openSettings(w);
   const rows = w.settingsRows();
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 5, 'four root rows plus the recently-used toggle');
   assert.equal(rows[3].kind, 'only-list');
   w.settingsIndex = 3;
   w.handleKey(k.ENTER);
@@ -1419,5 +1419,91 @@ test('the dock tile draws the device icon as shapes, not as an image', () => {
   assert.equal(v.deviceArtName('Fire TV Stick'), 'cast');
   assert.equal(v.deviceArtName('PlayStation 5'), 'gamepad-2');
   assert.equal(v.deviceArtName('something unknown'), 'box');
+});
+
+// ---- recently-used ordering (issue #55) -------------------------------------
+
+function fourApps(v) {
+  // The stock payload reports two valid apps; two more give the ordering
+  // enough unrecorded entries to prove their relative order survives.
+  v._lastData.apps.push({ appId: '4', appName: 'Alpha' }, { appId: '5', appName: 'Beta' });
+  v.readPrefs();
+}
+
+test('recent ordering: launched apps list newest-first, unlaunched apps keep vendor order', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  assert.equal(v.prefs.recentOrder, true, 'default on');
+  fourApps(v);
+  assert.deepEqual(v.apps.map(a => a.appId), ['1', '2', '4', '5'],
+    'without records the vendor order is untouched');
+  f.store.set('alvidaa_recent', JSON.stringify({ '5': 3000, '4': 2000 }));
+  v.readPrefs();
+  assert.deepEqual(v.apps.map(a => a.appId), ['5', '4', '1', '2'],
+    'recorded apps newest-first, then never-launched apps in vendor order');
+  v.stop();
+});
+
+test('recent ordering: launches record a timestamp and reorder the overlay live', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.overlay = true;
+  v.overlayIndex = 1; // Plex
+  v.launchFocused();
+  assert.deepEqual(f.calls.at(-1), ['launch', '2']);
+  const stored = JSON.parse(f.store.get('alvidaa_recent'));
+  assert.ok(stored['2'] > 0 && Math.abs(stored['2'] - Date.now()) < 5000,
+    'the launch is stamped with the current time');
+  assert.deepEqual(v.apps.map(a => a.appId), ['2', '1'],
+    'the freshly launched app is first when the overlay reopens');
+  // A favorite launch records too.
+  fourApps(v);
+  f.store.set('alvidaa_favorites', ['5']);
+  v.readPrefs();
+  v.zone = 'apps';
+  v.app = 0; // the Beta favorite tile
+  v.activate();
+  assert.deepEqual(f.calls.at(-1), ['launch', '5']);
+  assert.ok(JSON.parse(f.store.get('alvidaa_recent'))['5'] > 0,
+    'the favorite launch is recorded under its app id');
+  v.stop();
+});
+
+test('recent ordering: the toggle row turns the feature off and back on', () => {
+  const f = setup({ storage: {
+    alvidaa_recent_order: false,
+    alvidaa_recent: JSON.stringify({ '2': 1000 })
+  } }), v = f.instance, k = KEYS;
+  v.start();
+  assert.equal(v.prefs.recentOrder, false);
+  assert.deepEqual(v.apps.map(a => a.appId), ['1', '2'], 'off keeps the vendor order');
+  v.overlay = true;
+  v.overlayIndex = 1;
+  v.launchFocused();
+  assert.equal(f.store.get('alvidaa_recent'), JSON.stringify({ '2': 1000 }),
+    'nothing is recorded while the ordering is off');
+  openSettings(v);
+  const rows = v.settingsRows();
+  assert.equal(rows[rows.length - 1].kind, 'recent');
+  assert.equal(rows[rows.length - 1].value, 'off');
+  v.settingsIndex = rows.length - 1;
+  v.handleKey(k.ENTER);
+  assert.equal(f.store.get('alvidaa_recent_order'), 'true', 'stored as a real JSON boolean');
+  assert.equal(v.prefs.recentOrder, true);
+  assert.deepEqual(v.apps.map(a => a.appId), ['2', '1'], 'ordering applies once on');
+  v.handleKey(k.RIGHT);
+  assert.equal(f.store.get('alvidaa_recent_order'), 'false', 'Left/Right changes the value too');
+  v.stop();
+});
+
+test('recent ordering: the record caps at 40 entries, dropping the oldest', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  for (let i = 0; i < 45; i++) v.recordLaunch(String(i));
+  const stored = JSON.parse(f.store.get('alvidaa_recent'));
+  assert.equal(Object.keys(stored).length, 40);
+  assert.equal(stored['4'], undefined, 'the oldest records are pruned');
+  assert.ok(stored['5'] > 0 && stored['44'] > 0, 'the newest records survive');
+  v.stop();
 });
 

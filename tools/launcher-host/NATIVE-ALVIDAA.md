@@ -18,6 +18,7 @@ The design is the canvas launcher's r4 layout, ported to DOM:
 | inputs dock | bottom edge, five 320×176 tiles per page |
 | big label | the focused input's real name above the dock, `connected` / `no signal` under it |
 | Apps tile | one door; opens the app list as an overlay, 5-column grid |
+| recently-used order | the apps overlay lists launched apps newest-first (`alvidaa_recent`); toggle in Home settings, on by default |
 | Settings tile | opens the real stock TV Settings |
 | Launcher tile | one more door in view 2 (`☰`, "Home settings"); opens this component's own settings surface |
 | toast HUD | bottom center, floating glass pill for action feedback and alerts (default 2500ms, timed expiry) |
@@ -167,6 +168,8 @@ note that static custom names can go stale if the physical device changes.
 | `alvidaa_custom_names` | object | `{}` | Map of `sourceId` (or input label) to custom display name applied in `sourceName()`. |
 | `alvidaa_last_used` | string / number | `null` | Last activated input `sourceId`, persisted on dock activation and used as `smartIndex()` fallback when no input has signal. |
 | `alvidaa_auto_switch` | boolean | `false` | Opt-in toggle for automatic input switching on boot. |
+| `alvidaa_recent` | object | `{}` | Map of app id to last-launch epoch ms, pruned to the 40 newest; drives the overlay's recently-used ordering (issue #55). |
+| `alvidaa_recent_order` | boolean | `true` | When off, the apps overlay keeps vendor order and launches are not recorded. |
 | `alvidaa_favorites` | array of strings | `[]` | Pinned favorite app IDs in view 2 (max 5), launched directly. Stale IDs dropped silently. |
 
 ### Settings surface
@@ -185,7 +188,10 @@ overlay. `announce()` speaks the focused row (or keyboard cell) for TTS.
 - **Root page** — `Auto-switch on boot` toggles `alvidaa_auto_switch` as a real
   JSON boolean (OK or Left/Right); `Apps` (`N shown, M hidden`) and
   `Input names` open their pages; `Only-list active` renders only when
-  `alvidaa_only_apps` is non-empty and OK clears it (writes `[]`). The
+  `alvidaa_only_apps` is non-empty and OK clears it (writes `[]`); the
+  `Recently-used order` row toggles `alvidaa_recent_order` the same way —
+  off, the apps overlay keeps vendor order and launches stop being recorded.
+  The
   only-list overrides the hidden list, so the row says exactly that instead of
   growing a second allowlist editor — there is no UI to *build* an only-list,
   only to clear one.
@@ -232,6 +238,7 @@ Feature-by-feature walk comparing the canvas watcher UI (`launcher/index.html` r
 | **Auto-switch countdown** | 3500ms countdown when exactly 1 live input detected; bottom HUD; cancels on keypress; triggers source change | Opt-in via `alvidaa_auto_switch`; 3500ms countdown on first payload if exactly 1 live input; shared HUD pill; cancels on any handled key; triggers `changeSource` | `parity` | Disabled by default; cancel shows toast notice |
 | **Remote number hotkeys** | Digits 1–9 focus & activate dock tile; digit 0 resets to dock 0 | Digits 1–9 focus & activate dock tile; digit 0 focuses dock 0 without activating; numeral keycaps 1–9 on tiles; guarded by `sdk.key.KEYMAP` | `parity` | Guarded against open overlay; unhandled digits pass through |
 | **Pinned favorites / shortcuts** | View 2 displays `shortcuts` array (URL shortcuts with `★` glyph) | View 2 displays up to 5 pinned favorite apps from `alvidaa_favorites`; activates app directly without opening overlay; clamped safely | `parity` | Favorites render the app's real icon through `appIcon()` (same local-file / `*.vidaahub.com` allowlist as the overlay); the star glyph (`★`) is only the fallback when no allowlisted icon exists |
+| **Recently-used ordering** | Vendor order only | Apps overlay lists launched apps newest-first from `alvidaa_recent` (capped at 40 entries); apps with no record keep their vendor relative order behind the recorded ones; toggle row in Home settings | `native-only` | Off stops the recording as well as the sorting, so re-enabling starts from vendor order |
 | **Per-input wallpaper art** | Daily rotating wallpaper images or ambient gradients; no per-input art mapping | Build-time map `self.AlvidaaNativeInputArt` (local/data URI only); two-phase stacked cross-fade (incoming 0->1, outgoing 1->0) over 300ms | `native-only` | Switching to an input without configured art fades the outgoing art 1 -> 0 over the same 300ms, so the wallpaper arrives as a cross-fade rather than a cut |
 | **Toast HUD** | Viewport-fixed bottom glass capsule for action status and error messages | Viewport-fixed bottom floating glass pill HUD with opacity/transform transitions; drives action feedback, failure alerts, auto-switch notices | `parity` | Replaced legacy raw status text line |
 | **App filtering and custom names** | Server-side configuration | Storage-backed `alvidaa_hidden_apps`, `alvidaa_only_apps`, and `alvidaa_custom_names` with no-op fallback | `parity` | The settings surface (view 2 `Launcher` door) writes these keys in-launcher: hide/unhide apps, pin favorites, rename inputs, clear the only-list — no page injection needed |
@@ -368,6 +375,7 @@ no such global and fall back to `AlvidaaFreeMyTV`.
       - Full-screen modal dark glass overlay (`rgba(3,5,9,0.86)`) fades in over the stage.
       - 6-column grid displays all installed apps with local/vendor icons or brand color letter badges.
       - Remote arrow keys navigate the grid (UP/DOWN steps by 6, LEFT/RIGHT steps by 1).
+      - After launching an app and re-opening the overlay, that app sits first (recently-used ordering); apps never launched keep their vendor order behind the launched ones. With `Recently-used order` off in Home settings, the vendor order returns and launches are not recorded.
       - Pressing `Back` closes the overlay and returns focus to view 2.
       - Pressing `OK/Enter` on an app displays toast `Opening <AppName>…` and launches the app via APC.
 
@@ -388,7 +396,7 @@ no such global and fall back to `AlvidaaFreeMyTV`.
       - While the only-list is set, the apps page shows its footer line and toggling an app the list excludes toasts instead of writing.
       - The dock card and the big label above it read `Nintendo Switch` while the custom name exists, and return to the vendor name after `Reset name` (or after a `DONE` on a blanked draft).
       - Clearing the only-list restores the hidden-list behaviour immediately.
-      - Every write lands in `sdk.storage` as JSON (`alvidaa_hidden_apps`, `alvidaa_favorites`, `alvidaa_custom_names`, `alvidaa_only_apps`) and survives a UI restart.
+      - Every write lands in `sdk.storage` as JSON (`alvidaa_hidden_apps`, `alvidaa_favorites`, `alvidaa_custom_names`, `alvidaa_only_apps`, `alvidaa_recent_order`) and survives a UI restart; every launch stamps `alvidaa_recent` while the ordering is on.
     - *(pending hardware verification)*
 
 13. **Last-used focus fallback**
@@ -441,7 +449,9 @@ per-input wallpaper art cross-fade (including the fade-out when the next input
 has no art) and URL rejection policy, favorite tiles rendering the real icon
 with the star fallback, the device-class silhouette matcher (keyword order,
 fire-tv/apple-tv precedence, fallback, SVG data-URI round-trip, vendored-icon
-licences), the settings surface (door ownership, root rows,
+licences), recently-used ordering (newest-first with records, vendor order
+without, live reorder on launch, the toggle, the 40-entry cap), the settings
+surface (door ownership, root rows,
 auto-switch toggle, hide/unhide, pin cap, keyboard rename, blank-draft delete,
 Reset row, only-list rule, absent-storage no-ops, hotkey suppression, TTS
 labels), render structure and scaling, the entry's variant selection, and the

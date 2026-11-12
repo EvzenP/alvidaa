@@ -37,6 +37,9 @@
     return cells;
   })();
   var NAME_MAX = 24;
+  // Recently-used ordering (issue #55): alvidaa_recent maps app id -> last
+  // launch epoch ms and is pruned to this many entries.
+  var RECENT_MAX = 40;
   // Brand colours, so a letter badge reads as the app rather than as a random
   // hue. Only used when the build gives us no icon.
   var BRANDS = [
@@ -168,7 +171,8 @@
           artIncomingOpacity: 1,
           outgoingArtOpacity: 1,
           prefs: {
-            hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null, autoSwitch: false, favorites: []
+            hiddenApps: [], onlyApps: [], customNames: {}, lastUsed: null,
+            autoSwitch: false, recentOrder: true, recent: {}, favorites: []
           }
         };
       },
@@ -188,10 +192,12 @@
             customNames: readPref("alvidaa_custom_names", {}),
             lastUsed: readPref("alvidaa_last_used", null),
             autoSwitch: isTruthy(readPref("alvidaa_auto_switch", false)),
+            recentOrder: isTruthy(readPref("alvidaa_recent_order", true)),
+            recent: readPref("alvidaa_recent", {}),
             favorites: readPref("alvidaa_favorites", [])
           };
           if (this._lastData && this._lastData.apps) {
-            this.apps = this.filterApps(this._lastData.apps);
+            this.apps = this.sortRecent(this.filterApps(this._lastData.apps));
           }
           this.clamp();
         },
@@ -212,6 +218,35 @@
             return true;
           });
         },
+        // Recently-used ordering (issue #55): the overlay lists launched apps
+        // newest-first, from alvidaa_recent. Apps with no record keep their
+        // existing relative order behind the recorded ones — they are not
+        // dumped at the end in whatever order the engine's sort leaves them,
+        // so the ranking is written out by original index instead of trusting
+        // Array#sort to be stable (older engines in this family are not).
+        sortRecent: function (apps) {
+          var recent = this.prefs && this.prefs.recent;
+          if (!this.prefs || !this.prefs.recentOrder || !recent ||
+              typeof recent !== "object" || Array.isArray(recent)) return apps;
+          var ranked = [];
+          for (var i = 0; i < apps.length; i++) {
+            ranked.push({
+              app: apps[i],
+              at: Number(recent[String(apps[i].appId)]) || 0,
+              index: i
+            });
+          }
+          ranked.sort(function (a, b) {
+            if (a.at !== b.at) return b.at - a.at; // newest first
+            return a.index - b.index;             // vendor order within a group
+          });
+          // Copy through concat(), not [], so the result stays in the same
+          // realm as the list it re-orders (the test harness runs the
+          // component in a vm and compares its arrays against host ones).
+          var out = apps.concat();
+          for (var j = 0; j < ranked.length; j++) out[j] = ranked[j].app;
+          return out;
+        },
         start: function () {
           this.readPrefs();
           if (this._running) return;
@@ -221,7 +256,7 @@
             var firstPayload = !vm._payloadReceived;
             vm._payloadReceived = true;
             vm._lastData = data;
-            vm.apps = vm.filterApps(data.apps);
+            vm.apps = vm.sortRecent(vm.filterApps(data.apps));
             vm.sources = data.sources.filter(function (input) {
               return input && input.sourceId != null;
             });
@@ -690,10 +725,42 @@
               speak: "Only-list active, overrides hidden apps"
             });
           }
+          rows.push({
+            kind: "recent", label: "Recently-used order",
+            sub: "sorts the apps overlay by launch time",
+            value: this.prefs.recentOrder ? "on" : "off",
+            speak: "Recently used order, " + (this.prefs.recentOrder ? "on" : "off")
+          });
           return rows;
         },
         toggleAutoSwitch: function () {
           writePref("alvidaa_auto_switch", !this.prefs.autoSwitch);
+          this.readPrefs();
+        },
+        // Every launchApp goes through here first: stamp alvidaa_recent so the
+        // overlay can order by it, pruning to the newest RECENT_MAX entries.
+        // With the ordering toggled off the feature is off entirely — nothing
+        // is recorded either, so re-enabling starts from vendor order instead
+        // of replaying launches made while it was off.
+        recordLaunch: function (appId) {
+          if (appId == null || !this.prefs.recentOrder) return;
+          var recent = readPref("alvidaa_recent", {});
+          if (!recent || typeof recent !== "object" || Array.isArray(recent)) recent = {};
+          recent[String(appId)] = Date.now();
+          var ids = Object.keys(recent);
+          if (ids.length > RECENT_MAX) {
+            ids.sort(function (a, b) { return recent[a] - recent[b]; });
+            while (ids.length > RECENT_MAX) delete recent[ids.shift()];
+          }
+          writePref("alvidaa_recent", recent);
+          this.prefs.recent = recent;
+          // Re-rank the list in place rather than going through readPrefs():
+          // a launch record changes no visibility, and re-filtering from the
+          // last payload here would reset the overlay list mid-launch.
+          this.apps = this.sortRecent(this.apps);
+        },
+        toggleRecentOrder: function () {
+          writePref("alvidaa_recent_order", !this.prefs.recentOrder);
           this.readPrefs();
         },
         toggleAppVisible: function (app) {
@@ -797,6 +864,7 @@
           var row = this.settingsRows()[this.settingsIndex];
           if (!row) return;
           if (row.kind === "autoswitch") this.toggleAutoSwitch();
+          else if (row.kind === "recent") this.toggleRecentOrder();
           else if (row.kind === "open-apps") { this.settingsPage = "apps"; this.settingsIndex = 0; this.clamp(); }
           else if (row.kind === "open-inputs") { this.settingsPage = "inputs"; this.settingsIndex = 0; this.clamp(); }
           else if (row.kind === "only-list") this.clearOnlyList();
@@ -807,8 +875,10 @@
         nudgeSettingsRow: function () {
           var row = this.settingsRows()[this.settingsIndex];
           if (!row) return;
-          // Left/Right change a value: the auto-switch toggle and the pin.
+          // Left/Right change a value: the auto-switch and recently-used
+          // toggles, and the pin.
           if (row.kind === "autoswitch") this.toggleAutoSwitch();
+          else if (row.kind === "recent") this.toggleRecentOrder();
           else if (row.kind === "app") this.togglePin(row.app);
         },
         handleSettingsKey: function (code) {
@@ -856,6 +926,7 @@
           if (!item) return;
           if (item.kind === "favorite") {
             this.showToast("Opening " + (item.label || "app") + "…");
+            this.recordLaunch(item.appId);
             this.run(function () { return vm._platform.launchApp(item.appId); });
           } else if (item.kind === "apps") {
             this.openOverlay();
@@ -870,6 +941,7 @@
           var vm = this, app = this.apps[this.overlayIndex];
           if (!app) return;
           this.showToast("Opening " + (app.appName || "app") + "…");
+          this.recordLaunch(app.appId);
           this.run(function () { return vm._platform.launchApp(app.appId); });
           this.closeOverlay();
         },
