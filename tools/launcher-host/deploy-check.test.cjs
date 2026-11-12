@@ -149,7 +149,7 @@ test('a non-root shell is a no-go and stops the run', async t => {
   assert.equal(code, EXIT.NOGO);
   const names = checkNames(lines);
   assert.equal(names[names.length - 1], 'root', 'no check attempted after root');
-  assert.match(findLine(lines, 'FAIL  root'), /not as root/);
+  assert.match(findLine(lines, 'FAIL  root'), /uid is 1000/);
   assert.match(lines[lines.length - 1], /^blocked by root: /);
 });
 

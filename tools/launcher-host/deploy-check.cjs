@@ -107,15 +107,25 @@ function sshArgs(opts, command) {
 }
 
 function sshRemote(opts) {
+  // The TV's dropbear resets a connection now and then under a burst of
+  // sequential calls — three times on 2026-11-12 alone, always mid-run and
+  // always transient. One retry after a short pause turns a spurious no-go into
+  // a correct answer; a real failure still fails twice and is reported.
+  const TRANSIENT = /connection (closed|reset)|kex_exchange_identification|broken pipe/i;
   function spawn(command, encoding) {
-    const r = cp.spawnSync('ssh', sshArgs(opts, PATH_PREFIX + command), {
-      encoding, maxBuffer: 64 * 1024 * 1024
-    });
-    if (r.error) throw new Error('cannot run ssh: ' + r.error.message);
-    if (r.status === 255) { // ssh's own exit code: the lane, not the command, failed
-      throw new Error('ssh failed: ' + String(r.stderr || '').trim().split('\n').pop());
+    let last;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = cp.spawnSync('ssh', sshArgs(opts, PATH_PREFIX + command), {
+        encoding, maxBuffer: 64 * 1024 * 1024
+      });
+      if (r.error) throw new Error('cannot run ssh: ' + r.error.message);
+      if (r.status !== 255) return r.stdout;
+      last = r;
+      if (!TRANSIENT.test(String(r.stderr || ''))) break;
+      if (attempt === 0) cp.spawnSync('sleep', ['1']);
     }
-    return r.stdout;
+    // ssh's own exit code: the lane, not the command, failed.
+    throw new Error('ssh failed: ' + String(last.stderr || '').trim().split('\n').pop());
   }
   return {
     exec(cmd) { return String(spawn(cmd, 'utf8')); },
@@ -129,13 +139,19 @@ function sshRemote(opts) {
       if (r.status !== 0) throw new Error('cannot read ' + remotePath + ' over ssh (status ' + r.status + ')');
       return r.stdout;
     },
-    // The firmware drops ICMP; TCP is the documented probe (AGENTS.md).
+    // The firmware drops ICMP, so the probe is TCP — but through ssh, not a raw
+    // socket. Two reasons: this is the lane the deploy actually uses, so its
+    // answer is the one that matters; and node's net.connect returns
+    // EHOSTUNREACH on this host for addresses the OS reaches fine (measured
+    // 2026-11-12: .1 and .175 fail from node while ssh, nc and curl all
+    // connect, and .85 succeeds from node). Probing with ssh sidesteps that
+    // entirely and needs no extra dependency.
     connect(port) {
-      return new Promise(resolve => {
-        const s = net.connect({ host: opts.host, port }, () => { s.destroy(); resolve(true); });
-        s.setTimeout(3000, () => { s.destroy(); resolve(false); });
-        s.on('error', () => resolve(false));
-      });
+      const r = cp.spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+        '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null',
+        '-p', String(port), '-i', opts.key, 'root@' + opts.host, 'true'],
+      { encoding: 'utf8' });
+      return Promise.resolve(r.status === 0);
     }
   };
 }
@@ -158,10 +174,11 @@ function fixtureRemote(dir) {
   const map = p => path.join(dir, p);
   const readText = p => { try { return fs.readFileSync(map(p), 'utf8'); } catch { return null; } };
 
-  function busyboxId() {
+  // The real build has no `id`, so root is read from /proc/self/status.
+  function procStatusUid() {
     return fs.existsSync(map('.nonroot'))
-      ? 'uid=1000(nobody) gid=1000(nobody) groups=1000(nobody)\n'
-      : 'uid=0(root) gid=0(root) groups=0(root)\n';
+      ? 'Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n'
+      : 'Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n';
   }
 
   function busyboxMd5(target) {
@@ -206,12 +223,13 @@ function fixtureRemote(dir) {
   return {
     exec(cmd) {
       const c = cmd.replace(/^export PATH=[^;]*; /, '').replace(/\s*2>\/dev\/null/g, '').trim();
-      if (c === 'id') return busyboxId();
+      if (c === 'id') return procStatusUid();
+      if (c.startsWith('grep -E "^Uid|^Gid" /proc/self/status')) return procStatusUid();
       let m = c.match(/^md5sum (.+)$/);
       if (m) return busyboxMd5(m[1]);
       m = c.match(/^ls -ldn? (.+)$/);
       if (m) return busyboxLs(m[1]);
-      if (c.startsWith('df -k ')) return busyboxDf();
+      if (c.startsWith('df -k ') || c.startsWith('/usr/local/bin/busybox df -k ')) return busyboxDf();
       if (c === 'curl -s -m 3 ' + BRIDGE_URL) return readText('/bridge/api-debug.json') || '';
       if (c.includes('/proc/[0-9]*')) return busyboxEngineScan(c);
       throw new Error('fixture cannot emulate: ' + cmd);
@@ -329,16 +347,19 @@ async function checkReachability(ctx) {
 }
 
 function checkRoot(ctx) {
+  // Not `id`: this build has no id binary (measured 2026-11-10 — it also has no
+  // curl, wget, nc or sha256sum). /proc/self/status always exists.
   let out;
-  try { out = ctx.remote.exec('id').trim(); }
+  try { out = ctx.remote.exec('grep -E "^Uid|^Gid" /proc/self/status').trim(); }
   catch (error) {
-    record(ctx, 'root', 'FAIL', 'id over ssh failed: ' + error.message,
+    record(ctx, 'root', 'FAIL', 'reading /proc/self/status over ssh failed: ' + error.message,
       'check the root key (server/keys/) and that dropbear answers on port ' + ctx.opts.port);
     ctx.stop = true;
     return;
   }
-  if (/^uid=0\b/.test(out)) { record(ctx, 'root', 'PASS', out); return; }
-  record(ctx, 'root', 'FAIL', 'ssh answers but not as root: ' + out,
+  const uid = (out.match(/^Uid:\s*(\d+)/m) || [])[1];
+  if (uid === '0') { record(ctx, 'root', 'PASS', out.replace(/\s+/g, ' ')); return; }
+  record(ctx, 'root', 'FAIL', 'ssh answers but uid is ' + (uid === undefined ? 'unknown' : uid) + ': ' + out,
     'lane 3 needs root; the key must authenticate as root@tv');
   ctx.stop = true;
 }
@@ -476,8 +497,10 @@ function checkWatcher(ctx) {
 
 function checkSpace(ctx) {
   // df the mount, not the state dir: on a not-yet-bootstrapped TV the state
-  // dir does not exist and df on it would fail.
-  const out = ctx.remote.exec('df -k /var/local 2>/dev/null');
+  // dir does not exist and df on it would fail. And it is busybox's df, not a
+  // standalone one: this build has no `df` on PATH at all (measured 2026-11-12),
+  // so the applet has to be called explicitly.
+  const out = ctx.remote.exec('/usr/local/bin/busybox df -k /var/local 2>/dev/null');
   const row = out.split('\n')
     .map(l => l.trim().split(/\s+/))
     .find(f => f.length >= 6 && f[0].startsWith('/') && !isNaN(Number(f[3])));
