@@ -126,6 +126,22 @@ A configured `bg`/`logo` in `config.inputs` still wins where it exists, and is
 baked into the candidate at build time by `native-install.cjs`; it is the only
 path that puts a real photograph or wallpaper behind an input.
 
+### First frame: placeholder tiles (issue #54)
+
+The dock paints before the platform payload lands, so left alone the tiles pop
+from nothing to a shape once inputs arrive. The real shape is matched from the
+name the TV reports (`deviceArtName` above), which only exists after the
+payload — but the **fallback** silhouette is knowable before any of that. So
+pre-payload the dock draws six placeholder tiles at the exact tile geometry —
+same position, page pitch, size, chrome and 56px shape box as a real tile —
+each carrying the fallback silhouette (or, with no silhouette table baked in,
+the minimal hardware icon a nameless tile would draw). When the payload lands
+the real tiles swap in at the same geometry: nothing shifts, only the shapes
+resolve. The placeholders are decorative (`aria-hidden`), never focusable, and
+strictly pre-payload: after a payload that reports zero inputs the dock says
+`no inputs reported` instead, and a re-activated instance still holds its
+sources, so placeholders never replace real tiles.
+
 ### Icons: local files, then the vendor host
 
 App records are checked in order for `img`, `presetImg`, `icon`, `appIcon`,
@@ -304,6 +320,7 @@ no such global and fall back to `AlvidaaFreeMyTV`.
      - Screen renders deep obsidian OLED background (`#07080c`) with wallpaper/ambient gradient and contrast wash (`rgba(6,8,12,0.55)`).
      - Top-left displays hours/minutes typography (`116px`, weight 300, negative letter spacing, dimmed `:`) and uppercase date with bullet separator.
      - Bottom dock displays inputs horizontally with 28px rounded corners and 1px borders.
+     - Before the platform payload lands, the dock shows six placeholder tiles at the final tile geometry carrying the fallback silhouette (no `no inputs reported` line yet); when the payload arrives the placeholders swap to real tiles at the same geometry without a layout shift. *(Claim, pending hardware verification)*
      - Top-right displays no web status pill or reconnection banner.
      - Legacy diagnostic text ("Native - N apps...", "Waiting for TV data") does NOT appear anywhere on screen.
 
@@ -450,7 +467,10 @@ has no art) and URL rejection policy, favorite tiles rendering the real icon
 with the star fallback, the device-class silhouette matcher (keyword order,
 fire-tv/apple-tv precedence, fallback, SVG data-URI round-trip, vendored-icon
 licences), recently-used ordering (newest-first with records, vendor order
-without, live reorder on launch, the toggle, the 40-entry cap), the settings
+without, live reorder on launch, the toggle, the 40-entry cap), first-frame
+dock placeholders (six tiles at final geometry with the fallback silhouette,
+unmounted by the payload, never replacing real tiles, verdict after a
+zero-input payload), the settings
 surface (door ownership, root rows,
 auto-switch toggle, hide/unhide, pin cap, keyboard rename, blank-draft delete,
 Reset row, only-list rule, absent-storage no-ops, hotkey suppression, TTS

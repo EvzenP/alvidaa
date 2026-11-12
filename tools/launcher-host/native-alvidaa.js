@@ -1154,7 +1154,45 @@
         nodes.push(label(112, 812, 22, "INPUTS & SOURCES", "#64748b", 600));
         var dock = this.dockItems(), start = this.dockStart();
         var end = Math.min(dock.length, start + DOCK_PAGE);
-        if (!dock.length) {
+        if (!dock.length && !this._payloadReceived) {
+          // First frame (issue #54): the dock paints before the platform
+          // payload lands, so the tiles would pop from nothing once inputs
+          // arrive. The real shape is matched from the reported name, which
+          // only exists after the payload — but the fallback silhouette is
+          // knowable now, so paint it inside placeholders at the exact tile
+          // geometry and let the real tiles swap in without a layout shift.
+          // Only pre-payload: after a payload that reports zero inputs the
+          // verdict below is the truth, and a re-activated instance still
+          // holds its sources, so placeholders never replace real tiles.
+          var artTable = root.AlvidaaNativeDeviceArt;
+          var fallbackShape = (artTable && artTable.fallback) || "";
+          for (var ph = 0; ph < DOCK_PAGE; ph++) {
+            var ghost = [];
+            if (fallbackShape) {
+              ghost.push(h("div", { style: box((DOCK_SIZE - 56) / 2, 40, 56, 56, {
+                opacity: 0.85
+              }) }, deviceShapes(fallbackShape, false, 56)));
+            } else {
+              // No silhouette table baked in: the minimal hardware icon is
+              // what a nameless tile would draw, so that is the placeholder.
+              var ghostInk = "rgba(148,163,184,0.6)";
+              ghost.push(h("div", { style: box((DOCK_SIZE - 56) / 2, 46, 56, 34, {
+                border: "3px solid " + ghostInk, borderRadius: 6
+              }) }));
+              ghost.push(h("div", { style: box(DOCK_SIZE / 2 + 2, 80, 4, 8, { backgroundColor: ghostInk }) }));
+              ghost.push(h("div", { style: box(DOCK_SIZE / 2 - 12, 88, 24, 3, { backgroundColor: ghostInk }) }));
+            }
+            nodes.push(h("div", {
+              attrs: { "data-dock-placeholder": "true", "aria-hidden": "true" },
+              style: box(112 + ph * (DOCK_SIZE + DOCK_GAP), 848, DOCK_SIZE, DOCK_HEIGHT, {
+                borderRadius: 28,
+                backgroundImage: "linear-gradient(180deg, #161b24, #0d1017)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                overflow: "hidden"
+              })
+            }, ghost));
+          }
+        } else if (!dock.length) {
           nodes.push(label(112, 888, 28, "no inputs reported", "#475569", 500));
         }
         for (var i = start; i < end; i++) {

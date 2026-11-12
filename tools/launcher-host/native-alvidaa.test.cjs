@@ -1507,3 +1507,84 @@ test('recent ordering: the record caps at 40 entries, dropping the oldest', () =
   v.stop();
 });
 
+// ---- first-frame dock placeholders (issue #54) ------------------------------
+
+test('first frame: the dock paints placeholder tiles at final geometry before the payload', () => {
+  const f = setup(), v = f.instance;
+  let deliver;
+  f.root.AlvidaaNativePlatform = (_sdk, callback) => ({
+    start() { deliver = callback; },
+    stop() {},
+    launchApp() {}, changeSource() {}, openSettings() {}
+  });
+  f.root.AlvidaaNativeDeviceArt = {
+    rules: [['(playstation|switch)', 'gamepad-2']],
+    fallback: 'box'
+  };
+  v.start();
+  const draw = () => f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
+  const placeholders = flat => flat.filter(n => n.data && n.data.attrs &&
+    n.data.attrs['data-dock-placeholder']);
+  const texts = flat => flat.flatMap(n => n.children || []).filter(c => typeof c === 'string');
+
+  // First frame: no payload yet — placeholder tiles at the exact geometry a
+  // real tile occupies, carrying the fallback silhouette, and no verdict.
+  let flat = flatten(draw());
+  let ph = placeholders(flat);
+  assert.equal(ph.length, 6, 'one full page of placeholders');
+  assert.ok(!texts(flat).includes('no inputs reported'),
+    'pre-payload is not a verdict about the inputs');
+  assert.ok(!texts(flat).includes('TV'), 'no real tiles yet');
+  const phTile = ph[0].data.style;
+  assert.equal(phTile.left, '112px');
+  assert.equal(phTile.top, '848px');
+  assert.equal(phTile.width, '264px');
+  assert.equal(phTile.height, '180px');
+  assert.equal(phTile.borderRadius, '28px');
+  assert.equal(phTile.backgroundImage, 'linear-gradient(180deg, #161b24, #0d1017)');
+  assert.equal(ph[1].data.style.left, '396px', 'page pitch matches the real dock');
+  // The fallback shape sits in the same 56px box at the same offsets the real
+  // tile's shape container uses, so the swap changes nothing but the shape.
+  const shapeBox = flat.find(n => n.data && n.data.style &&
+    n.data.style.width === '56px' && n.data.style.height === '56px' &&
+    n.data.style.top === '40px' && n.data.style.left === '104px');
+  assert.ok(shapeBox, 'the placeholder carries a shape container');
+  const primitive = flatten(ph[0]).find(n => n.data && n.data.style &&
+    (/(^|;|\s)border:/.test(String(n.data.style.border || '')) || n.data.style.backgroundColor));
+  assert.ok(primitive, 'the fallback silhouette is drawn as div shapes');
+
+  // The payload lands: placeholders are gone, real tiles sit at the same
+  // geometry, and the shape container has not moved.
+  deliver({
+    apps: [{ appId: '1', appName: 'Netflix' }],
+    sources: [
+      { sourceId: 0, name: 'TV', is_signal: '1' },
+      { sourceId: 'HDMI2', name: 'HDMI2', displayname2: 'PlayStation 5', is_signal: 0 }
+    ],
+    errors: [], waiting: false
+  });
+  flat = flatten(draw());
+  assert.equal(placeholders(flat).length, 0, 'placeholders unmount with the payload');
+  const tiles = flat.filter(n => n.data && n.data.attrs &&
+    n.data.attrs.role === 'button' && n.data.style.top === '848px');
+  assert.equal(tiles.length, 2, 'real dock tiles render');
+  assert.equal(tiles[0].data.style.left, '112px', 'same geometry as the placeholder');
+  const realShapeBox = flat.find(n => n.data && n.data.style &&
+    n.data.style.width === '56px' && n.data.style.height === '56px' &&
+    n.data.style.top === '40px' && n.data.style.left === '104px');
+  assert.ok(realShapeBox, 'the real tile draws its shape in the same box');
+  assert.ok(texts(flat).includes('PlayStation 5'));
+
+  // A re-activated instance keeps its sources even before the next payload:
+  // placeholders must never replace real tiles.
+  v._payloadReceived = false;
+  assert.equal(placeholders(flatten(draw())).length, 0);
+
+  // And a payload reporting zero inputs gets the verdict, not placeholders.
+  deliver({ apps: [], sources: [], errors: [], waiting: false });
+  flat = flatten(draw());
+  assert.equal(placeholders(flat).length, 0);
+  assert.ok(texts(flat).includes('no inputs reported'));
+  v.stop();
+});
+
