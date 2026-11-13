@@ -7,7 +7,7 @@ health check degrades gracefully: a doctor that dies when the thing it
 checks is down is useless.
 
 Subcommands: sys, logs, net, doctor, open, apps, sources, ota, privacy,
-backup, restore, key, push, pull
+backup, restore, key, power, push, pull
 Environment: TV_HOST overrides the default 192.168.0.11 (the TV is
 DHCP-shuffled — see server/tv).
 """
@@ -1372,6 +1372,138 @@ def cmd_key(args):
     return 0
 
 
+# --------------------------------------------------------------------- power
+# Standby / reboot / status (issue #11). Reboot is how a boot-persistence
+# change is proven; standby lets a script wait for the TV instead of a human
+# polling the screen. Findings 12 §4: the /etc/profile reboot route can hang
+# forever, so the direct busybox `reboot -f` is the lane. The kill-switch
+# check lives in the same command: a reboot with a broken hook is how a TV
+# ends up in a loop.
+#
+# Wake-from-standby over the network is NOT measured on the reference unit.
+# standby probes TCP 2222 after the action and reports what it sees —
+# reachable or unreachable — never assumed. There is no network-visible
+# panel read on this hardware, so status says so instead of inventing one;
+# uptime and the port probes are the signals a script can wait on.
+def _tcp_open(port, timeout=4):
+    s = socket.socket()
+    s.settimeout(timeout)
+    try:
+        s.connect((TV, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _uptime_tv():
+    out = tv("cat /proc/uptime 2>/dev/null").strip().split()
+    try:
+        return float(out[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def _hook_safe_for_reboot():
+    """(safe, reason) — a reboot is safe when the hook cannot loop the TV:
+    the kill-switch disarms the hook at next boot, or the hook has been
+    verified (tvfw applied this boot, or the bridge reports the watchdog
+    alive). hook.off absent + never verified = refuse."""
+    if _exists("/var/local/hook.off"):
+        return True, "kill-switch /var/local/hook.off is present — the hook is disarmed at next boot"
+    marker = tv("cat /var/local/tvfw.applied_at_boot 2>/dev/null").strip()
+    # the marker's first token is a float (T+seconds, e.g. "12.34") — the ota
+    # reader floats() it for the same reason; isdigit() would reject it
+    if marker:
+        try:
+            applied = float(marker.split()[0])
+            return True, "tvfw applied this boot (T+%.2fs) — the hook ran" % applied
+        except ValueError:
+            pass
+    try:
+        hook = (fetch("/api/debug").get("hook") or {})
+        if hook.get("watchdogAlive") and not hook.get("killSwitch"):
+            return True, "hook verified alive via the bridge (watchdog alive, kill-switch absent)"
+    except Exception:
+        pass
+    return False, ("/var/local/hook.off is absent and the hook has never been verified "
+                   "(no tvfw marker this boot, bridge hook state unreadable)")
+
+
+def cmd_power(args):
+    action = args[0] if args else "status"
+
+    if action == "status":
+        uptime = _uptime_tv()
+        if uptime is None:
+            print("uptime      : UNREADABLE — /proc/uptime missing or the lane is down")
+        else:
+            print("uptime      : %.0f s (%.1f h)" % (uptime, uptime / 3600.0))
+        print("ssh 2222    : %s" % ("open" if _tcp_open(2222) else "closed"))
+        print("bridge 8770 : %s" % ("open" if _tcp_open(8770) else "closed"))
+        print("panel state : unmeasured — no network-visible panel read exists on")
+        print("              this hardware; uptime and the ports above are the")
+        print("              signals a script can wait on for 'the TV came back'")
+        print("wake note   : wake-from-standby over the network is UNMEASURED on")
+        print("              the reference unit — do not script against it")
+        return 0
+
+    if action == "standby":
+        # The MQTT power action where available — through the bridge's own
+        # session (one MQTT server per TV; never a second one).
+        status, body = fetch_raw("/api/power?state=standby")
+        text = body.decode(errors="replace") if isinstance(body, bytes) else str(body)
+        try:
+            result = json.loads(text)
+        except Exception:
+            result = None
+        if not (isinstance(result, dict) and result.get("ok")):
+            print("standby refused: no MQTT power action on this bridge (%s %s)"
+                  % (status, text.strip()[:60]))
+            print("  the bridge routes carry no /api/power (checked); a second MQTT")
+            print("  session would kick the paired client — one session per TV.")
+            print("  the device lane would inject the power keycode, which on this")
+            print("  remote is a GUESS (116, key-injection's table) and wake-from-")
+            print("  standby is unmeasured — refused rather than guessed. When the")
+            print("  bridge grows /api/power, this command uses it, no call-site change.")
+            return 1
+        print("standby sent via the bridge MQTT session (%s)" % status)
+        # Wake probe: measure, never assume.
+        reachable = _tcp_open(2222, timeout=3) or _tcp_open(2222, timeout=3)
+        if reachable:
+            print("wake probe  : TV still reachable on 2222 after standby — network")
+            print("              wake is POSSIBLE (probe; unverified for scripting)")
+        else:
+            print("wake probe  : TV dropped off the network after standby —")
+            print("              wake-from-standby is NOT reachable over the network;")
+            print("              physical power is required to bring it back")
+        return 0
+
+    if action == "reboot":
+        yes = "--yes" in args
+        safe, reason = _hook_safe_for_reboot()
+        if not safe:
+            print("ERROR: refusing reboot — %s" % reason)
+            print("  a reboot with a broken hook can loop the TV. Safe path: disarm")
+            print("  the hook first (create /var/local/hook.off), then reboot.")
+            return 1
+        if not yes:
+            print("refusing: reboot needs --yes — it drops the SSH lane and restarts the TV")
+            print("usage: alvidaa power reboot --yes")
+            return 2
+        print("reboot issued (%s reboot -f; findings 12 §4: the /etc/profile route hangs)" % BB)
+        try:
+            tv("%s reboot -f" % BB, timeout=15)
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # the connection dropping mid-command is the reboot working
+        print("verify with 'alvidaa power status': uptime resets, ssh 2222 reopens")
+        return 0
+
+    print("usage: alvidaa power standby|reboot|status")
+    return 2
+
+
 COMMANDS = {
     "sys": cmd_sys,
     "logs": cmd_logs,
@@ -1381,6 +1513,7 @@ COMMANDS = {
     "apps": cmd_apps,
     "sources": cmd_sources,
     "key": cmd_key,
+    "power": cmd_power,
     "ota": cmd_ota,
     "privacy": cmd_privacy,
     "push": cmd_push,
