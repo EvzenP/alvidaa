@@ -1268,11 +1268,18 @@ def cmd_privacy(args):
 # call-site change — and the output still says which transport was used,
 # because a silent fallback hides a broken MQTT path.
 #
-# Codes: the verified set was measured on the reference unit by the doom lane
-# (BT remote, standard EV_KEY). Everything else is a standard-Linux-HID GUESS
-# — the doom map logged BACK/HOME/volume as unmapped, so those codes were
-# never measured on this remote. HOME is a guess by code but a guarantee by
-# contract: it is always in the table, and cmd_key refuses nothing on it.
+# Codes: NOTHING here is verified to reach the launcher. The doom lane measured
+# these codes as *readable* from the BT remote on event3, which is a different
+# claim from "writing them here moves the UI" — and on 2026-11-13 that second
+# claim was measured false for DOWN, RIGHT, ENTER and HOME: zero frame change
+# over a 12-second sample each (findings 13 §9). Writing to /dev/input/eventN
+# does not inject input at all; the kernel discards it. A /dev/uinput virtual
+# keyboard registers and is then ignored by the vendor's key handling.
+#
+# The flag below therefore means "code measured readable from the remote", not
+# "key injection works". Keep it: it is still the right code to send if a lane
+# that the vendor listens to ever exists. HOME stays in the table by contract —
+# it is the owner's escape — but it is not proven to work through this lane.
 KEYS = {
     "up": (103, True), "down": (108, True),
     "left": (105, True), "right": (106, True),
@@ -1363,7 +1370,8 @@ def cmd_key(args):
     print("transport: device (%s) — MQTT sendkey preferred but unavailable: %s"
           % (device, reason))
     print("key: %s (code %d, %s) x%d" % (name, code,
-          "verified on the reference unit" if verified
+          "code measured readable from the remote; NOT verified to move the UI"
+          if verified
           else "GUESS: standard Linux HID, never measured on this remote",
           count))
     print(tv(key_command(name, count, delay_ms, device), timeout=25))
