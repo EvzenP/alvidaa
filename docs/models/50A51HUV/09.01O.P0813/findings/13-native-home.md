@@ -179,3 +179,44 @@ Backups live in `/var/local/alvidaa/native-home/backup/` and, privately, in
   `/var/local` were written.
 - One MQTT server per TV: the existing bridge session was left alone.
 - Vendor bundle and screenshots stay in gitignored `firmware/50a51huv/`.
+
+## 8. What actually paints on this engine (2026-11-11)
+
+Measured on the reference unit while chasing an input icon that would not
+appear. Four mechanisms, four answers. This is the expensive part of the
+finding: each one looked correct in the DOM and produced nothing on screen, and
+there is no DevTools on this build to say why.
+
+| Mechanism | Result |
+| --- | --- |
+| SVG data URI in an `<img>` | **does not paint** |
+| the same SVG data URI in `background-image` | **does not paint** |
+| the vendor icon-font class the SDK reports (`v-op-ic-videoplay`, rendered as `<i class="v-icon-op …">`) | **does not paint** outside the vendor's own components |
+| a PNG data URI in `background-image` | paints — the generated wallpaper has always rendered this way |
+| a `div` with a `border` or `background-color` | paints — this is how the fallback hardware icon was drawn |
+
+So: **raster or shapes, never SVG, and do not count on the vendor icon font
+from a component we inject.** The dock's device icons are now drawn as divs
+(rects, bars, circles) for that reason.
+
+Two traps found alongside it, both in our own code:
+
+- **`box()` always emits `position: absolute`**, so a panel built with it is the
+  containing block for its children. Positioning a child at `panelX + 56` inside
+  a panel at `panelX` double-counts the offset. The app-list grid sat 64 px right
+  and 140 px down, with its last row at y=1056 on a 1080 screen. The settings
+  layer used panel-relative coordinates and never showed it.
+- **The SDK and the MQTT sourcelist name the same fact differently.** The vendor
+  JS SDK (`all-inputs.getAllInputsData`) reports the device on a port as
+  `deviceName`; the MQTT sourcelist the bridge reads calls it `displayname2`.
+  The native lane only sees the SDK, so reading `displayname2` left HDMI3
+  labelled "HDMI3" while the canvas lane showed "Fire TV Stick".
+- The SDK's per-source `icon` is an **icon-font class name**, not a URL
+  (`v-op-ic-videoplay`). Treating it as an image path yields a broken `<img>`
+  that suppresses any fallback.
+
+Verification lane for anything visual on this build: `tools/screenshot.sh`, then
+a pixel diff against the previous frame to prove a change happened, and an
+ink-count over the region of interest to prove *what* changed. Both were run
+here; the diff is what showed that two earlier "fixes" had changed only the
+clock.
