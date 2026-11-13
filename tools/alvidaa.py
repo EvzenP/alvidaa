@@ -7,7 +7,7 @@ health check degrades gracefully: a doctor that dies when the thing it
 checks is down is useless.
 
 Subcommands: sys, logs, net, doctor, open, apps, sources, ota, privacy,
-backup, restore, push, pull
+backup, restore, key, push, pull
 Environment: TV_HOST overrides the default 192.168.0.11 (the TV is
 DHCP-shuffled — see server/tv).
 """
@@ -20,6 +20,7 @@ import os
 import posixpath
 import re
 import socket
+import struct
 import subprocess
 import sys
 import tarfile
@@ -1244,6 +1245,127 @@ def cmd_privacy(args):
     return 2
 
 
+
+# --- key injection (issue #12) ------------------------------------------------
+#
+# Transport order: the vendor MQTT ui_service action `sendkey` is PREFERRED —
+# it is in the documented action surface (findings 01) — but no session-safe
+# route to it exists from the host today: neither the bridge (/api/* in
+# bridge/http.go) nor the server (/api/* in vidaa_server.py) exposes a key
+# action, and opening a second MQTT session would kick the paired client off
+# the broker (AGENTS.md rule). mqtt_route() returns None with that reason and
+# the DEVICE lane carries the key: EV_KEY events written to the remote's
+# /dev/input node over the root SSH lane (server/tv), the exact path the doom
+# lane measured (DOOM.md: BT remote on /dev/input/event3; the MStar IR
+# receiver event1 is silent). When a session-safe MQTT route appears,
+# mqtt_route() grows a real route and the transport order lights up with no
+# call-site change — and the output still says which transport was used,
+# because a silent fallback hides a broken MQTT path.
+#
+# Codes: the verified set was measured on the reference unit by the doom lane
+# (BT remote, standard EV_KEY). Everything else is a standard-Linux-HID GUESS
+# — the doom map logged BACK/HOME/volume as unmapped, so those codes were
+# never measured on this remote. HOME is a guess by code but a guarantee by
+# contract: it is always in the table, and cmd_key refuses nothing on it.
+KEYS = {
+    "up": (103, True), "down": (108, True),
+    "left": (105, True), "right": (106, True),
+    "ok": (352, True),                                  # measured: not Enter
+    "back": (158, False), "home": (102, False), "esc": (1, False),
+    "enter": (28, False),
+    "volumeup": (115, False), "volumedown": (114, False),
+    "power": (116, False),
+}
+KEY_COUNT_CAP = 5
+DEFAULT_DEVICE = "/dev/input/event3"                    # BT remote (DOOM.md)
+DEFAULT_DELAY_MS = 150
+EV_KEY = 1
+
+
+def mqtt_route():
+    """The session-safe MQTT sendkey route, or (None, reason). The reason is
+    printed by cmd_key when the device lane is used — a silent fallback hides
+    a broken MQTT path."""
+    return None, ("the vendor sendkey action has no session-safe route from "
+                  "the host (no bridge or server endpoint expresses it, and a "
+                  "second MQTT session would kick the paired client off the "
+                  "broker)")
+
+
+def key_event_bytes(code, value):
+    """One 16-byte little-endian input_event as armv7 lays it out: timeval
+    (4+4, zeroed — the kernel stamps evdev writes), type EV_KEY, u16 code,
+    s32 value. Zero timeval keeps the bytes deterministic for the tests."""
+    return struct.pack("<LLHHi", 0, 0, EV_KEY, code, value)
+
+
+def key_tap_cmd(code, device):
+    """Press + release for one key tap, as two printf '%b' writes — %b
+    interprets the escapes in the ARGUMENT, so a 0x25 ('%') byte cannot be
+    eaten as a conversion spec the way it would inside a format string."""
+    esc = lambda b: "".join("\\x%02x" % c for c in b)
+    return ("printf '%%b' '%s' > %s ; printf '%%b' '%s' > %s"
+            % (esc(key_event_bytes(code, 1)), device,
+               esc(key_event_bytes(code, 0)), device))
+
+
+def key_command(name, count, delay_ms, device):
+    """The whole SSH command for a key sequence: tap, delay, tap..."""
+    code = KEYS[name][0]
+    parts = [key_tap_cmd(code, device)]
+    for _ in range(count - 1):
+        parts.append("sleep %.2f" % (delay_ms / 1000.0))
+        parts.append(key_tap_cmd(code, device))
+    return " ; ".join(parts)
+
+
+def cmd_key(args):
+    if not args or args[0].startswith("--"):
+        print("usage: alvidaa.py key <NAME> [--count N] [--delay MS] [--device /dev/input/eventN]")
+        print("keys: %s" % ", ".join(sorted(KEYS)))
+        return 2
+    name, count, delay_ms, device = args[0], 1, DEFAULT_DELAY_MS, DEFAULT_DEVICE
+    i = 1
+    while i < len(args):
+        if args[i] == "--count":
+            i += 1
+            count = int(args[i])
+        elif args[i] == "--delay":
+            i += 1
+            delay_ms = int(args[i])
+        elif args[i] == "--device":
+            i += 1
+            device = args[i]
+        else:
+            print("unknown flag: %s" % args[i])
+            return 2
+        i += 1
+    if name not in KEYS:
+        print("unknown key: %s" % name)
+        print("known keys: %s" % ", ".join(sorted(KEYS)))
+        return 2
+    if count > KEY_COUNT_CAP:
+        print("--count is capped at %d: a key tap, not a hold" % KEY_COUNT_CAP)
+        return 2
+    count = max(1, count)
+    code, verified = KEYS[name]
+    route, reason = mqtt_route()
+    if route is not None:
+        route(name, count, delay_ms)
+        print("transport: mqtt (sendkey via the existing session)")
+        return 0
+    print("transport: device (%s) — MQTT sendkey preferred but unavailable: %s"
+          % (device, reason))
+    print("key: %s (code %d, %s) x%d" % (name, code,
+          "verified on the reference unit" if verified
+          else "GUESS: standard Linux HID, never measured on this remote",
+          count))
+    print(tv(key_command(name, count, delay_ms, device), timeout=25))
+    print("done — if nothing happened, the remote may sit on another event "
+          "node: check /proc/bus/input/devices, or pass --device")
+    return 0
+
+
 COMMANDS = {
     "sys": cmd_sys,
     "logs": cmd_logs,
@@ -1252,6 +1374,7 @@ COMMANDS = {
     "open": cmd_open,
     "apps": cmd_apps,
     "sources": cmd_sources,
+    "key": cmd_key,
     "ota": cmd_ota,
     "privacy": cmd_privacy,
     "push": cmd_push,
