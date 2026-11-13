@@ -6,15 +6,23 @@ reimplemented here); bridge work goes through http://<tv>:8770. Every
 health check degrades gracefully: a doctor that dies when the thing it
 checks is down is useless.
 
-Subcommands: sys, logs, net, doctor, open, apps, sources, ota, privacy
+Subcommands: sys, logs, net, doctor, open, apps, sources, ota, privacy,
+backup, restore, push, pull
 Environment: TV_HOST overrides the default 192.168.0.11 (the TV is
 DHCP-shuffled — see server/tv).
 """
+import base64
+import datetime
+import hashlib
+import io
 import json
 import os
+import posixpath
+import re
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -548,6 +556,416 @@ def cmd_pull(args):
     return 0 if ok else 1
 
 
+# ------------------------------------------------------------- backup/restore
+# Snapshot the TV's mutable state (issue #16) and put named pieces back.
+# The mutable set: /var/local/alvidaa (bridge config, launcher, native-home
+# state, the once-only stock backups, freeze state), the hook at
+# /var/local/otaTest.sh, the firewall policy /var/local/tvfw and the
+# kill-switch marker /var/local/hook.off — whose EXISTENCE is state (present
+# means the next reboot disarms the hook; reversibility law).
+#
+# Safety shape, per the brief:
+#   - backup is read-only against the TV (tar/md5sum/find reads only) and
+#     refuses to include anything on the never-touch list
+#     (tools/launcher-host/never-touch.json) — a match aborts the whole run,
+#     never a warning;
+#   - restore is explicit and per-path, never a blind untar: --only names
+#     what goes back, the target must sit in the writable lane (/var/local),
+#     a switch in progress (switch.log without switch.done) refuses, and
+#     never-touch applies to writes too;
+#   - key material is excluded from the archive and NAMED in the manifest —
+#     keys and tokens never leave server/keys/ discipline (AGENTS.md), so a
+#     restored dropbear host key would be new key material, not a restored one;
+#   - md5 on the TV (no sha256sum there), sha256 on the host, per-file md5 in
+#     the manifest so the archive is auditable without extracting.
+MUTABLE_PATHS = [
+    "/var/local/alvidaa",
+    "/var/local/otaTest.sh",
+    "/var/local/tvfw",
+    "/var/local/hook.off",
+]
+# Known key material: always excluded, always named in the manifest.
+KEY_PATHS = ["/etc/dropbear"]
+# Basenames that count as key/token material if they ever appear inside the
+# mutable set (defensive: none belong there, and one that does must not ride
+# the archive silently).
+KEY_NAME_RE = re.compile(
+    r"(^|/)(id_(rsa|dsa|ecdsa|ed25519)|authorized_keys|.*_host_key|.*\.key|.*\.pem|.*\.token)$")
+NEVER_TOUCH_JSON = os.path.join(HERE, "launcher-host", "never-touch.json")
+RESTORE_WRITABLE_ROOTS = ["/var/local"]
+# <state>/switch.done semantics: runSwitch removes done and log at kick and
+# writes done at the end, so log-present + done-absent is the mid-flight
+# signature (a fresh TV has neither; a finished switch has both).
+SWITCH_STATE_DIRS = ["/var/local/alvidaa/native-home", "/var/local/alvidaa"]
+RESTORE_STAGE = "/tmp/.alvidaa-restore"
+BB = "/var/local/tvtools/busybox"  # (same path as the ota/privacy sections)
+
+_NT_DOC = None
+
+
+def _nt_normalize(p):
+    """TV-absolute, lexically normalized — mirrors never-touch.cjs normalize():
+    collapse a doubled leading slash (posix normpath would keep '//OAD' and it
+    would slip past a prefix rule), then normalize so dot-dot cannot walk out
+    of a prefix."""
+    p = str(p or "")
+    if p.startswith("/"):
+        p = re.sub(r"^/{2,}", "/", p)
+    return posixpath.normpath(p)
+
+
+def _glob_to_re(pattern):
+    """'*' matches any run of characters except '/'; everything else literal;
+    anchored — mirrors never-touch.cjs globToRegExp."""
+    source = "".join("[^/]*" if part == "*" else re.escape(part)
+                     for part in pattern.split("*"))
+    return re.compile("^" + source + "$")
+
+
+def _never_touch_hit(path):
+    """The first matching never-touch rule for a normalized path, or None.
+    Same rules file, same semantics as never-touch.cjs check()."""
+    global _NT_DOC
+    if _NT_DOC is None:
+        with open(NEVER_TOUCH_JSON, "r", encoding="utf-8") as f:
+            _NT_DOC = json.load(f)
+    p = _nt_normalize(path)
+    for rule in _NT_DOC.get("rules", []):
+        m, t = rule.get("match", ""), rule.get("type")
+        if t == "exact":
+            hit = p == m
+        elif t == "prefix":
+            base = m.rstrip("/")
+            hit = p == base or p.startswith(base + "/")
+        elif t == "glob":
+            hit = _glob_to_re(m).match(p) is not None
+        else:
+            hit = False
+        if hit:
+            return rule
+    return None
+
+
+def _tv_bytes(cmd, timeout=180, data=None):
+    """Binary lane through the server/tv wrapper — tar streams are not text
+    and the tv() text lane would mangle them. `data` rides stdin (the pipe is
+    the lane cmd_push uses; argv dies at ~10KB on dropbear). The seam the
+    tests replace."""
+    out = subprocess.run([TV_WRAPPER, cmd], capture_output=True, timeout=timeout,
+                         input=data)
+    return out.stdout
+
+
+def _exists(path):
+    return tv("[ -e '%s' ] && echo yes || echo no" % path).strip() == "yes"
+
+
+def _is_dir(path):
+    return tv("[ -d '%s' ] && echo yes || echo no" % path).strip() == "yes"
+
+
+def _size_tv(path):
+    out = tv("%s wc -c < '%s' 2>/dev/null" % (BB, path)).strip()
+    return int(out) if out.isdigit() else 0
+
+
+def _walk(path):
+    """Every file under path (path itself if it is a file); [] when absent."""
+    if not _exists(path):
+        return []
+    if not _is_dir(path):
+        return [path]
+    return [line.strip() for line in
+            tv("%s find '%s' -type f 2>/dev/null" % (BB, path)).splitlines()
+            if line.strip()]
+
+
+def _tar_on_tv():
+    out = tv("%s tar --help 2>&1 | head -n 1" % BB)
+    return "applet not found" not in out
+
+
+def _is_file(path):
+    return tv("[ -f '%s' ] && echo yes || echo no" % path).strip() == "yes"
+
+
+def _switch_in_progress():
+    """True while any known switch is mid-flight: its log exists without a
+    done verdict (runSwitch removes both at kick, writes done at the end).
+    File semantics — the markers are files, not directories."""
+    for state in SWITCH_STATE_DIRS:
+        log = _is_file(state + "/switch.log")
+        done = _is_file(state + "/switch.done")
+        if log and not done:
+            return state
+    return None
+
+
+def _collect_backup_set():
+    """(files, excluded) for the mutable set. Any never-touch match aborts the
+    whole backup — a refusal, never a warning (never-touch.json discipline)."""
+    files, excluded = [], []
+    for root in MUTABLE_PATHS + KEY_PATHS:
+        hit = _never_touch_hit(root)
+        if hit:
+            print("ERROR: refusing backup — %s is on the never-touch list [%s]: %s"
+                  % (_nt_normalize(root), hit["id"], hit["reason"]))
+            return None, None
+    for root in MUTABLE_PATHS:
+        for path in _walk(root):
+            hit = _never_touch_hit(path)
+            if hit:
+                print("ERROR: refusing backup — %s is on the never-touch list [%s]: %s"
+                      % (_nt_normalize(path), hit["id"], hit["reason"]))
+                return None, None
+            if KEY_NAME_RE.search(_nt_normalize(path)):
+                excluded.append({"path": _nt_normalize(path),
+                                 "reason": "key/token material never leaves the TV "
+                                           "(server/keys/ discipline)"})
+                continue
+            files.append(_nt_normalize(path))
+    return files, excluded
+
+
+def _backup_dir(out_dir):
+    stamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    directory = out_dir or os.path.join(HERE, "..", "firmware", "backup")
+    directory = os.path.abspath(directory)
+    os.makedirs(directory, exist_ok=True)
+    return directory, "alvidaa-backup-%s-%s.tar" % (TV, stamp)
+
+
+def _tar_members_tv(paths):
+    """The TV-side tar stream for the top-level paths, or None when the TV has
+    no tar applet (the fallback pulls files individually and tars on the host)."""
+    if not _tar_on_tv():
+        return None
+    spec = " ".join("'%s'" % p for p in paths)
+    return _tv_bytes("%s tar cf - %s 2>/dev/null" % (BB, spec), timeout=600)
+
+
+def _pull_one(path):
+    """One file over the base64 lane (cmd_pull's transport), verified against
+    the TV-side md5. Returns bytes, or None on any mismatch/absence."""
+    want = _md5_tv(path)
+    if not want:
+        return None
+    data = base64.b64decode("".join(tv("%s base64 '%s'" % (BB, path), timeout=120).split()))
+    return data if hashlib.md5(data).hexdigest() == want else None
+
+
+def cmd_backup(args):
+    out_dir = None
+    rest = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--out":
+            i += 1
+            if i >= len(args):
+                print("usage: alvidaa backup [--out <dir>]")
+                return 2
+            out_dir = args[i]
+        else:
+            rest.append(args[i])
+        i += 1
+    if rest:
+        print("usage: alvidaa backup [--out <dir>]")
+        return 2
+
+    files, excluded = _collect_backup_set()
+    if files is None:
+        return 1
+    entries = []
+    for path in files:
+        entries.append({"path": path, "size": _size_tv(path), "md5": _md5_tv(path)})
+
+    directory, name = _backup_dir(out_dir)
+    archive_path = os.path.join(directory, name)
+    stream = _tar_members_tv([p for p in MUTABLE_PATHS if _exists(p)])
+    if stream is not None:
+        with open(archive_path, "wb") as f:
+            f.write(stream)
+        tar_on_tv = True
+    else:
+        # No tar applet on the TV: pull files individually and tar on the host
+        # with the same member names a TV-side tar would produce (leading '/'
+        # stripped), so restore cannot tell the two apart.
+        with tarfile.open(archive_path, "w") as t:
+            for entry in entries:
+                data = _pull_one(entry["path"])
+                if data is None:
+                    print("ERROR: could not pull %s (md5 mismatch or unreadable) "
+                          "— archive incomplete, not written" % entry["path"])
+                    return 1
+                info = tarfile.TarInfo(entry["path"].lstrip("/"))
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+        tar_on_tv = False
+
+    with open(archive_path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    manifest = {
+        "schema": 1,
+        "created": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tv_host": TV,
+        "archive": name,
+        "archive_sha256": digest,
+        "archive_size": os.path.getsize(archive_path),
+        "tar_on_tv": tar_on_tv,
+        "entries": entries,
+        "excluded": [{"path": key, "reason": "key material never leaves the TV "
+                      "(server/keys/ discipline)"} for key in KEY_PATHS] + excluded,
+    }
+    with open(archive_path + ".manifest.json", "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    print("backup %d file(s) -> %s (%d bytes, sha256 %s)  tar-on-tv: %s"
+          % (len(entries), archive_path, manifest["archive_size"], digest[:12] + "…", tar_on_tv))
+    for e in entries:
+        print("  %-58s %8d  md5 %s" % (e["path"], e["size"], e["md5"]))
+    for x in manifest["excluded"]:
+        print("  EXCLUDED %-50s %s" % (x["path"], x["reason"]))
+    print("manifest: %s.manifest.json" % archive_path)
+    return 0
+
+
+def _restore_argparse(args):
+    directory, only = None, None
+    rest = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--only":
+            i += 1
+            if i >= len(args):
+                return None, None, None
+            only = args[i]
+        else:
+            rest.append(args[i])
+        i += 1
+    if len(rest) != 1:
+        return None, None, None
+    return rest[0], only, rest
+
+
+def cmd_restore(args):
+    directory, only, _ = _restore_argparse(args)
+    if directory is None:
+        print("usage: alvidaa restore <dir> --only <path>")
+        return 2
+    manifest_path = os.path.join(directory, "manifest.json")
+    candidates = [manifest_path] if os.path.isfile(manifest_path) else sorted(
+        os.path.join(directory, f) for f in os.listdir(directory)
+        if f.endswith(".manifest.json")) if os.path.isdir(directory) else []
+    if not candidates:
+        print("no manifest in %s (expected <archive>.manifest.json)" % directory)
+        return 2
+    with open(candidates[0], "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    archive_path = os.path.join(directory, manifest.get("archive", ""))
+    if not os.path.isfile(archive_path):
+        print("archive missing: %s" % archive_path)
+        return 2
+    with open(archive_path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    if digest != manifest.get("archive_sha256"):
+        print("ERROR: archive sha256 mismatch (manifest %s, actual %s) — refusing; "
+              "the archive is not the one the manifest audited"
+              % (manifest.get("archive_sha256", "?")[:12] + "…", digest[:12] + "…"))
+        return 1
+
+    entries = {e["path"]: e for e in manifest.get("entries", [])}
+    if not only:
+        print("restore is explicit and per-path — never a blind untar. "
+              "Name one with --only; the archive holds:")
+        for path in sorted(entries):
+            print("  %s" % path)
+        return 2
+
+    # The safety refusals fire on the REQUEST, before archive membership is
+    # even consulted: a read-only or never-touch target is refused whether or
+    # not the archive happens to hold it.
+    want = _nt_normalize(only)
+    hit = _never_touch_hit(want)
+    if hit:
+        print("ERROR: refusing restore — %s is on the never-touch list [%s]: %s"
+              % (want, hit["id"], hit["reason"]))
+        return 1
+    if not any(want == r or want.startswith(r.rstrip("/") + "/")
+               for r in RESTORE_WRITABLE_ROOTS):
+        print("ERROR: refusing restore — %s is outside the writable lane (%s): "
+              "read-only partition, or never ours (never-touch.json)"
+              % (want, ", ".join(RESTORE_WRITABLE_ROOTS)))
+        return 1
+    in_progress = _switch_in_progress()
+    if in_progress:
+        print("ERROR: refusing restore — a switch is in progress (%s/switch.log "
+              "without switch.done); put the named file back after it finishes" % in_progress)
+        return 1
+    targets = sorted(p for p in entries
+                     if p == want or p.startswith(want.rstrip("/") + "/"))
+    if not targets:
+        print("ERROR: %s is not in this archive (nothing to restore)" % want)
+        return 2
+
+    # Extract the named members host-side and verify each against the manifest
+    # BEFORE anything is written to the TV.
+    payload = {}
+    with tarfile.open(archive_path, "r") as t:
+        for member in t.getmembers():
+            if not member.isfile():
+                continue
+            member_path = "/" + member.name.lstrip("/")
+            if member_path not in dict.fromkeys(targets):
+                continue
+            data = t.extractfile(member).read()
+            if hashlib.md5(data).hexdigest() != entries[member_path]["md5"]:
+                print("ERROR: md5 mismatch for %s (archive vs manifest) — refusing; "
+                      "nothing was written" % member_path)
+                return 1
+            payload[member_path] = data
+    missing = [p for p in targets if p not in payload]
+    if missing:
+        print("ERROR: archive does not contain %s — refusing" % ", ".join(missing))
+        return 1
+
+    # Stage and stream: one tar of the relative payload over the stdin lane
+    # (the pipe is the lane cmd_push uses), then named mv per file. Only
+    # these writes touch the TV.
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as t:
+        for path, data in payload.items():
+            info = tarfile.TarInfo(path.lstrip("/"))
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    out = _tv_bytes(
+        "%s mkdir -p %s && cat > %s/restore.tar && "
+        "%s tar xf %s/restore.tar -C %s/ && %s rm -f %s/restore.tar && echo STAGE-OK"
+        % (BB, RESTORE_STAGE, RESTORE_STAGE, BB, RESTORE_STAGE, RESTORE_STAGE, BB, RESTORE_STAGE),
+        timeout=300, data=buf.getvalue())
+    if b"STAGE-OK" not in out:
+        print("restore failed at staging: %s"
+              % (out.decode(errors="replace").strip()[:200] or "empty"))
+        return 1
+
+    failures = 0
+    for path in sorted(payload):
+        rel = path.lstrip("/")
+        parent = posixpath.dirname(path)
+        out = tv("%s mkdir -p '%s' && mv '%s/%s' '%s' && %s md5sum '%s' 2>/dev/null | %s cut -d' ' -f1"
+                 % (BB, parent, RESTORE_STAGE, rel, path, BB, path, BB), timeout=60)
+        got = out.strip()
+        ok = got == entries[path]["md5"]
+        failures += 0 if ok else 1
+        print("restore %s  md5 %s  %s" % (
+            path, entries[path]["md5"][:12] + "…", "VERIFIED" if ok else "MISMATCH (tv %s)" % got[:12] + "…"))
+    tv("%s rm -rf %s" % (BB, RESTORE_STAGE))
+    if failures:
+        print("ERROR: %d of %d file(s) failed verification — see above" % (failures, len(payload)))
+        return 1
+    print("restored %d file(s) from %s (md5 verified on the TV)" % (len(payload), manifest.get("archive")))
+    return 0
+
+
 # ---------------------------------------------------------------- privacy
 # Kill-list / telemetry visibility (issue #15), READ-ONLY: nothing here
 # touches firewall state. The whole point of reporting the layers
@@ -838,6 +1256,8 @@ COMMANDS = {
     "privacy": cmd_privacy,
     "push": cmd_push,
     "pull": cmd_pull,
+    "backup": cmd_backup,
+    "restore": cmd_restore,
 }
 
 
