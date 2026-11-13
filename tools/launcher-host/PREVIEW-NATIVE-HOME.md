@@ -9,6 +9,7 @@ TV and no deploy.
 ```
 node tools/launcher-host/preview-native-home.cjs [--port 8080]   # serve, open the URL
 node tools/launcher-host/preview-native-home.cjs --out preview.html   # one static file
+node tools/launcher-host/preview-native-home.cjs --view overlay --out overlay.html
 ```
 
 `--out` writes the same self-contained page to a file (useful for
@@ -29,6 +30,29 @@ Either way the page carries three things:
 The red banner reads **"stub preview — not device-verified"** and stays on
 screen. It is there so nobody screenshots the preview and calls it a deploy.
 
+## Layers — dock, overlay, settings
+
+The visual pass needs every layer reviewable on a laptop, not only the dock.
+Four views exist, and they are exclusive by preview contract — a reviewer
+asking for one layer gets exactly that layer in the snapshot (the component
+itself layers settings over a still-open overlay; the preview does not):
+
+| View | What it shows | How to reach it |
+| --- | --- | --- |
+| `dock` (default) | clock, inputs dock, apps row | nothing — it is the opening state |
+| `overlay` | the grouped apps overlay | `?view=overlay`, the **Apps overlay** button, `--view overlay` |
+| `settings` | the settings root with real row values | `?view=settings`, the **Settings** button, `--view settings` |
+| `settings-apps` | the settings apps page (`shown`/`hidden`, ★ pins) | `?view=settings-apps`, the **Settings · Apps** button |
+
+Deep links are URL queries (`http://localhost:8080/?view=overlay`) so a
+screenshot can be taken of a specific layer without clicking; `--view` bakes
+the same choice into an `--out` file's snapshot. A control strip above the
+stage — preview chrome, outside the Home, driving the same public state —
+switches layers with the mouse and marks the active one. Every view change
+goes through the component's public methods (`openOverlay`,
+`openLauncherSettings`) or its data object; there is no second input path,
+and keyboard navigation still rides the `handleKey` bridge.
+
 ## The fixture
 
 A living room, not a lab: six inputs with mixed signal state and the names a
@@ -42,6 +66,16 @@ out (browser home, stock home, a blank name). Three favorites come from
 `alvidaa_favorites`, so the dock's favorite tiles render with their real
 icons. Device art is the **real baked `AlvidaaNativeDeviceArt` rules** and
 the wallpaper is the real generated PNG — the same payloads a build inlines.
+
+The layers' fixture needs come from storage, the way the owner's would:
+`alvidaa_groups` carries two curated groups ("Essentials", "Media") so the
+overlay renders headered sections plus the automatic "Other apps" catch-all;
+`alvidaa_auto_switch: true` and `alvidaa_idle_minutes: 5` make the settings
+root show real values instead of factory rows; `alvidaa_hidden_apps` hides
+one early app and one tail app so the settings apps page carries both the
+`shown` and `hidden` row values inside its first page. No custom input
+names — `customNames` outranks the reported device names in `sourceName()`,
+and the device names above are the living-room contract the dock must show.
 
 Keyboard works like the TV: arrows move focus, Enter activates, Backspace
 closes the overlay. One bridge makes that true: the component listens for the
@@ -81,17 +115,25 @@ the question "does it render on the engine?".
 node --test tools/launcher-host/preview-native-home.test.cjs
 ```
 
-Thirteen cases, no browser needed: the fixture loads the component exactly
-like the component's own tests (36 apps after filtering, six inputs, one
-registered key listener); inputs carry mixed signal and the living-room
-names; the fixture covers every tile shape (PNG-tile apps, badge apps,
-filtered apps); the tree converts into DOM-shaped objects (ids, px-resolved
-numeric styles, unitless opacity, `on.click` surviving, the favorite's
-`<img>`); device shapes are border/background divs and no SVG elements
-exist; arrows move dock focus with exactly one focused tile; the Apps tile
-opens the overlay and Backspace closes it; a favorite launches through the
-platform stub; the overlay pages and launches the focused app; `--out`
-writes a self-contained file carrying the banner, fixture names, component
-source, baked rules, wallpaper and rendered snapshot markup; the served page
-answers identically; the embedded scripts parse as JS **and the boot script bridges real keydown to handleKey** (the component registers the vendor key-down event, which browser keypresses never fire); and the CLI usage
-contract.
+Twenty cases, no browser needed: the fixture loads the component exactly
+like the component's own tests (34 apps after filtering and one hidden, six
+inputs, one registered key listener); inputs carry mixed signal and the
+living-room names; the fixture covers every tile shape (PNG-tile apps, badge
+apps, filtered apps) and carries the groups and non-default prefs the layers
+need; the tree converts into DOM-shaped objects (ids, px-resolved numeric
+styles, unitless opacity, `on.click` surviving, the favorite's `<img>`);
+device shapes are border/background divs and no SVG elements exist; arrows
+move dock focus with exactly one focused tile; the Apps tile opens the
+overlay and Backspace closes it; a favorite launches through the platform
+stub; the overlay pages and launches the focused app from the grouped list;
+each `?view=` renders its layer (dock clean, grouped overlay headers,
+settings root with `on` and `5 min`, settings apps with `shown`/`hidden` and
+the ★ pin); `applyView` touches only public state and the dock view closes
+every layer; `--out` writes a self-contained file carrying the banner,
+fixture names, component source, baked rules, wallpaper and rendered
+snapshot markup; `--view` bakes a chosen layer into that snapshot and
+validates its value; the served page answers identically; the embedded
+scripts parse as JS **and the boot script bridges real keydown to handleKey**
+and wires the deep links and control strip (the component registers the
+vendor key-down event, which browser keypresses never fire); and the CLI
+usage contract.

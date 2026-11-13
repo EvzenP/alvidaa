@@ -29,8 +29,10 @@ test('the fixture loads the component exactly like the tests do', () => {
   const v = f.instance;
   assert.equal(f.calls.filter(c => c[0] === 'start').length, 1);
   // 39 fixture apps; the component filters browser home, stock home and the
-  // blank name, so 36 reach the dock and the overlay.
-  assert.equal(v.apps.length, 36);
+  // blank name, and the fixture hides two (Twitch early, Search in the tail —
+  // the settings apps-page then carries both row values) — 34 reach the dock
+  // and the overlay.
+  assert.equal(v.apps.length, 34);
   const dropped = ['vidaa-home', '206', '301'];
   for (const id of dropped) {
     assert.ok(!v.apps.some(a => a.appId === id), 'filtered: ' + id);
@@ -167,13 +169,92 @@ test('arrow keys page the overlay and ENTER launches from it', () => {
   assert.equal(v.overlayIndex, 0);
   v.handleKey(preview.KEYS.RIGHT);
   assert.equal(v.overlayIndex, 1);
-  const focused = String(v.apps[v.overlayIndex].appId);
+  // The overlay pages over overlayList() — with groups in the fixture that is
+  // the flattened curated list, not this.apps — and the launch goes to the app
+  // it focused. Read before the launch re-sorts apps by recency (issue #55).
+  const focused = String(v.overlayList()[v.overlayIndex].appId);
   v.handleKey(preview.KEYS.ENTER);
-  // Read before the launch re-sorts apps by recency (issue #55) — the launch
-  // goes to the app the overlay focused, whatever index it lands on after.
   assert.deepEqual(f.calls.at(-1), ['launch', focused], 'launch goes through the platform stub');
   v.handleKey(preview.KEYS.BACK);
   assert.equal(v.overlay, false);
+  v.stop();
+});
+
+/* ---- layer views: applyView drives each layer through public state --------- */
+
+function layerTexts(view) {
+  const { component, instance } = preview.loadFixtureComponent();
+  preview.applyView(instance, view);
+  const flat = [];
+  (function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.text !== undefined) flat.push(String(node.text));
+    for (const child of node.children || []) walk(child);
+  }(preview.renderSnapshot(component, instance)));
+  return { flat, texts: flat, has: s => flat.some(t => t === s) };
+}
+
+test('the fixture carries the groups and non-default prefs the layers need', () => {
+  const storage = preview.fixtureStorage();
+  const groups = JSON.parse(storage.alvidaa_groups);
+  assert.deepEqual(groups.map(g => g.name), ['Essentials', 'Media']);
+  assert.equal(storage.alvidaa_auto_switch, 'true');
+  assert.equal(storage.alvidaa_idle_minutes, '5');
+  const f = load();
+  // Spread into a host array: prefs.groups is built inside the component's
+  // vm realm, and deepStrictEqual compares Array prototypes across realms.
+  assert.deepEqual([...f.instance.prefs.groups.map(g => g.name)], ['Essentials', 'Media']);
+  assert.equal(f.instance.prefs.autoSwitch, true);
+  assert.equal(f.instance.prefs.idleMinutes, 5);
+  f.instance.stop();
+});
+
+test('?view=dock is the default: no settings or overlay text in the tree', () => {
+  const dock = layerTexts('dock');
+  assert.equal(dock.has('HOME SETTINGS'), false);
+  assert.equal(dock.has('Essentials'), false);
+  assert.equal(dock.has('OK to open \u00b7 BACK to close'), false);
+});
+
+test('?view=overlay renders the grouped apps overlay', () => {
+  const overlay = layerTexts('overlay');
+  assert.equal(overlay.has('OK to open \u00b7 BACK to close'), true);
+  // The curated groups render as headers, in config order.
+  assert.equal(overlay.has('Essentials'), true);
+  assert.equal(overlay.has('Media'), true);
+  // "Other apps" (the unclaimed tail) paginates below the first page, so it
+  // is not in the first-page tree — the headers above it are the assertion.
+  const appNames = overlay.texts.filter(t => ['Netflix', 'YouTube', 'Prime Video', 'Spotify', 'Plex'].includes(t));
+  assert.ok(appNames.length >= 4, 'grouped apps render under their headers');
+});
+
+test('?view=settings shows non-default values, not factory rows', () => {
+  const settings = layerTexts('settings');
+  assert.equal(settings.has('HOME SETTINGS'), true);
+  assert.equal(settings.has('on'), true, 'auto-switch reads on, not the default off');
+  assert.equal(settings.has('5 min'), true, 'idle screen reads 5 min, not the default off');
+});
+
+test('?view=settings-apps shows the app rows with real state', () => {
+  const apps = layerTexts('settings-apps');
+  assert.equal(apps.has('APPS'), true);
+  assert.equal(apps.has('shown'), true, 'visible apps carry their shown value');
+  assert.equal(apps.has('hidden'), true, 'filtered apps carry their hidden value');
+  assert.equal(apps.has('★ Netflix'), true, 'the favorite carries its pin marker');
+});
+
+test('applyView drives only public state, and dock closes every layer', () => {
+  const f = load();
+  const v = f.instance;
+  preview.applyView(v, 'overlay');
+  assert.equal(v.overlay, true);
+  preview.applyView(v, 'settings');
+  assert.equal(v.settings, true);
+  assert.equal(v.overlay, false, 'the settings view closes the overlay');
+  preview.applyView(v, 'dock');
+  assert.equal(v.settings, false);
+  assert.equal(v.overlay, false);
+  assert.equal(v.zone, 'dock');
   v.stop();
 });
 
@@ -238,6 +319,48 @@ test('the embedded boot script and component source parse as JS (no browser need
     'the boot script bridges real keydown to handleKey');
   assert.match(scripts[1], /v\.handleKey\(e\.keyCode\);[\s\S]*?draw\(\);[\s\S]*?preventDefault/,
     'handled keys redraw then preventDefault');
+  // Deep links and the control strip: ?view= selects the layer, the strip's
+  // buttons drive the same public state, and neither is a second input path —
+  // both land in applyView, which only touches the data object and public
+  // methods.
+  assert.match(scripts[1], /location\.search/, 'deep links are read from the URL');
+  assert.match(scripts[1], /applyView\(v, requested\)/, 'the requested view is applied');
+  assert.match(scripts[1], /setView\(requested\)/, 'the control strip starts on the requested view');
+  const strip = html.slice(html.indexOf('id="preview-controls"'), html.indexOf('id="preview-stage"'));
+  for (const view of preview.VIEWS) {
+    assert.match(strip, new RegExp('data-view="' + view + '"'), 'control strip button for ' + view);
+  }
+});
+
+test('--view bakes a layer into the --out snapshot and validates its value', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-native-home-'));
+  try {
+    // Assertions run on the SSR snapshot region only: the embedded component
+    // source carries every layer's text ('HOME SETTINGS' included) in EVERY
+    // page, so a file-wide includes proves nothing about the snapshot.
+    const snapshotOf = html => html.slice(
+      html.indexOf('<div id="alvidaa-native"'),
+      html.indexOf('<div id="preview-banner"'));
+    const overlayFile = path.join(dir, 'overlay.html');
+    assert.equal(preview.main(['node', 'preview-native-home.cjs', '--view', 'overlay', '--out', overlayFile]), preview.EXIT.OK);
+    const overlaySnap = snapshotOf(fs.readFileSync(overlayFile, 'utf8'));
+    assert.match(overlaySnap, /<div id="alvidaa-native" style="position: absolute;/);
+    assert.ok(overlaySnap.includes('Essentials'), 'the overlay snapshot carries the group headers');
+    assert.ok(overlaySnap.includes('OK to open \u00b7 BACK to close'), 'the overlay snapshot is the overlay layer');
+    assert.ok(!overlaySnap.includes('HOME SETTINGS'), 'the overlay snapshot does not carry the settings layer');
+
+    const settingsFile = path.join(dir, 'settings.html');
+    assert.equal(preview.main(['node', 'preview-native-home.cjs', '--view', 'settings', '--out', settingsFile]), preview.EXIT.OK);
+    const settingsSnap = snapshotOf(fs.readFileSync(settingsFile, 'utf8'));
+    assert.ok(settingsSnap.includes('HOME SETTINGS'), 'the settings snapshot is the settings layer');
+    assert.ok(settingsSnap.includes('5 min'), 'non-default idle value in the static markup');
+    assert.ok(!settingsSnap.includes('Essentials'), 'the settings snapshot does not carry the overlay');
+
+    assert.throws(() => preview.main(['node', 'preview-native-home.cjs', '--view', 'nonsense']),
+      /--view must be one of/, 'an unknown layer is a usage error');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('usage: unknown flags and bad ports are usage errors; --help is clean', () => {

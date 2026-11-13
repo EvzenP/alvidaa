@@ -69,7 +69,7 @@ class UsageError extends Error {
 
 function parse(argv) {
   const args = argv.slice(2);
-  const opts = { port: DEFAULT_PORT, out: null };
+  const opts = { port: DEFAULT_PORT, out: null, view: 'dock' };
   let i = 0;
   const need = name => {
     if (i >= args.length) throw new UsageError(name + ' needs a value');
@@ -81,7 +81,10 @@ function parse(argv) {
       opts.port = Number(need('--port'));
       if (!Number.isInteger(opts.port) || opts.port < 0) throw new UsageError('--port must be a non-negative integer');
     } else if (arg === '--out') opts.out = need('--out');
-    else if (arg === '--help') opts.help = true;
+    else if (arg === '--view') {
+      opts.view = need('--view');
+      if (!VIEWS.includes(opts.view)) throw new UsageError('--view must be one of: ' + VIEWS.join(', '));
+    } else if (arg === '--help') opts.help = true;
     else throw new UsageError('unknown flag: ' + arg);
   }
   return opts;
@@ -187,11 +190,58 @@ function fixtureSources() {
 }
 
 function fixtureStorage() {
-  return { alvidaa_favorites: JSON.stringify(['1', '5', '100']) };
+  return {
+    alvidaa_favorites: JSON.stringify(['1', '5', '100']),
+    // Groups (issue #57): the overlay renders these as headered sections plus
+    // the automatic "Other apps" catch-all for everything unclaimed.
+    alvidaa_groups: JSON.stringify([
+      { name: 'Essentials', apps: ['1', '2', '3'] },
+      { name: 'Media', apps: ['5', '6'] }
+    ]),
+    // Non-default preference values, so the settings layer shows real state
+    // instead of every row at its factory default. No custom input names:
+    // customNames outrank the reported device names in sourceName(), and this
+    // fixture's device names are the living-room contract the dock must show.
+    // Two hidden apps so the settings apps-page carries both row values —
+    // Twitch sorts early enough to be inside the panel's first page (Search
+    // pages out of view, and is hidden anyway as the far tail).
+    alvidaa_auto_switch: 'true',
+    alvidaa_idle_minutes: '5',
+    alvidaa_hidden_apps: JSON.stringify(['100', '129'])
+  };
 }
 
 function fixturePayload() {
   return { apps: fixtureApps(), sources: fixtureSources(), errors: [], waiting: false };
+}
+
+/* --------------------------------------------------------- layer views -- */
+/* The layers a reviewer needs to see without pressing keys. Every state
+ * change goes through the component's own public methods or its data object —
+ * never a reimplementation — so the preview shows exactly what the TV shows
+ * for the same state. Views are EXCLUSIVE by preview contract: the component
+ * layers settings over a still-open overlay, but a reviewer asking for one
+ * layer gets exactly that layer in the snapshot. Self-contained for
+ * toString() embedding in the page. */
+const VIEWS = ['dock', 'overlay', 'settings', 'settings-apps'];
+
+function applyView(instance, view) {
+  var v = instance;
+  if (view === 'overlay') {
+    v.settings = false;
+    v.zone = 'apps';
+    v.app = 0;
+    v.openOverlay();
+  } else if (view === 'settings') {
+    v.overlay = false;
+    v.openLauncherSettings();
+  } else if (view === 'settings-apps') {
+    v.overlay = false;
+    v.openLauncherSettings();
+    v.settingsPage = 'apps';
+    v.settingsIndex = 0;
+  } else { v.settings = false; v.overlay = false; v.zone = 'dock'; }
+  return v;
 }
 
 /* ------------------------------------------------- loading the component -- */
@@ -339,7 +389,9 @@ function renderSnapshot(component, instance) {
 /* ----------------------------------------------------------------- page -- */
 
 function buildPage(options = {}) {
+  const view = VIEWS.includes(options.view) ? options.view : 'dock';
   const { component, instance } = loadFixtureComponent({ innerWidth: options.innerWidth || 1280 });
+  applyView(instance, view);
   const snapshot = htmlFrom(renderSnapshot(component, instance));
   const boot = '(function () {\n' +
     'var FIXTURE = ' + JSON.stringify(fixturePayload()) + ';\n' +
@@ -364,6 +416,12 @@ function buildPage(options = {}) {
     'Object.keys(component.methods).forEach(function (k) { v[k] = component.methods[k].bind(v); });\n' +
     'component.mounted.call(v);\n' +
     'component.activated.call(v);\n' +
+    // Deep links: ?view=overlay, ?view=settings, ?view=settings-apps select the
+    // layer without clicking; the baked default is the CLI --view (dock).
+    'var requested = (String(location.search).match(/view=([a-z-]+)/) || [])[1] || ' +
+    JSON.stringify(view) + ';\n' +
+    applyView.toString() + '\n' +
+    'applyView(v, requested);\n' +
     'var rootEl = document.getElementById("preview-root");\n' +
     'function h(tag, data, children) { return { tag: tag, data: data, children: children }; }\n' +
     elementFrom.toString() + '\n' +
@@ -380,21 +438,48 @@ function buildPage(options = {}) {
     '  draw();\n' +
     '  if (handled) e.preventDefault();\n' +
     '});\n' +
+    // The control strip is preview chrome, not the product: it drives the same
+    // public state the deep links select, so a reviewer can walk layers with
+    // the mouse and still screenshot exactly what the TV renders.
+    'var strip = document.getElementById("preview-controls");\n' +
+    'function setView(view) {\n' +
+    '  applyView(v, view);\n' +
+    '  Array.prototype.forEach.call(strip.querySelectorAll("[data-view]"), function (btn) {\n' +
+    '    btn.className = btn.getAttribute("data-view") === view ? "pv-btn pv-on" : "pv-btn";\n' +
+    '  });\n' +
+    '  draw();\n' +
+    '}\n' +
+    'Array.prototype.forEach.call(strip.querySelectorAll("[data-view]"), function (btn) {\n' +
+    '  btn.addEventListener("click", function () { setView(btn.getAttribute("data-view")); });\n' +
+    '});\n' +
     'window.addEventListener("resize", function () { draw(); });\n' +
     'setInterval(draw, 1000);\n' +
-    'draw();\n' +
+    'setView(requested);\n' +
     '})();\n';
   return '<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n' +
     '<title>alvidaa native Home — preview</title>\n' +
     '<style>\n' +
     'html, body { margin: 0; padding: 0; background: #07080c; height: 100%; overflow: hidden; }\n' +
-    '#preview-stage { position: relative; width: 100%; height: 100%; overflow: hidden; }\n' +
+    '#preview-controls { position: fixed; left: 0; right: 0; top: 0; z-index: 99;\n' +
+    '  padding: 5px 14px; background: #10141c; color: #94a3b8;\n' +
+    '  font: 600 12px/16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }\n' +
+    '.pv-btn { margin: 0 4px; padding: 3px 12px; background: #1c2530; color: #cbd5e1;\n' +
+    '  border: 1px solid #334155; border-radius: 5px; cursor: pointer; font: inherit; }\n' +
+    '.pv-btn.pv-on { background: #0ea5e9; color: #04121c; border-color: #0ea5e9; }\n' +
+    '#preview-stage { position: absolute; left: 0; top: 27px; width: 100%;\n' +
+    '  height: calc(100% - 27px - 30px); overflow: hidden; }\n' +
     '#preview-root { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }\n' +
     '#preview-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 99;\n' +
     '  padding: 6px 14px; background: #7f1d1d; color: #fecaca;\n' +
     '  font: 600 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;\n' +
     '  letter-spacing: 0.06em; text-transform: uppercase; }\n' +
     '</style>\n</head>\n<body>\n' +
+    '<div id="preview-controls">view:\n' +
+    '<button class="pv-btn" data-view="dock">Dock</button>\n' +
+    '<button class="pv-btn" data-view="overlay">Apps overlay</button>\n' +
+    '<button class="pv-btn" data-view="settings">Settings</button>\n' +
+    '<button class="pv-btn" data-view="settings-apps">Settings · Apps</button>\n' +
+    '</div>\n' +
     '<div id="preview-stage"><div id="preview-root">' + snapshot + '</div></div>\n' +
     '<div id="preview-banner">' + escapeHtml(BANNER) + '</div>\n' +
     '<script>\n' + SOURCE.replace(/<\/script/gi, '<\\/script') + '\n</script>\n' +
@@ -414,23 +499,26 @@ function startServer(port, page) {
 function main(argv) {
   const opts = parse(argv);
   if (opts.help) {
-    console.log('usage: node tools/launcher-host/preview-native-home.cjs [--port 8080] [--out file.html]');
+    console.log('usage: node tools/launcher-host/preview-native-home.cjs [--port 8080] [--out file.html] [--view ' + VIEWS.join('|') + ']');
     console.log('');
     console.log('The native Home in a browser, no TV: same component, same render tree,');
     console.log('fixture payload, keyboard wired through the component\'s own handleKey.');
+    console.log('Layers: --view or ?view= deep links (dock, overlay, settings, settings-apps);');
+    console.log('the control strip in the page switches layers without clicking through.');
     console.log('A banner marks it "stub preview — not device-verified".');
     return EXIT.OK;
   }
-  const page = buildPage({ innerWidth: 1280 });
+  const page = buildPage({ innerWidth: 1280, view: opts.view });
   if (opts.out) {
     fs.writeFileSync(opts.out, page);
-    console.log('written: ' + opts.out + ' (' + Buffer.byteLength(page) + ' bytes) — open it in a browser');
+    console.log('written: ' + opts.out + ' (' + Buffer.byteLength(page) + ' bytes, view: ' + opts.view + ') — open it in a browser');
     return EXIT.OK;
   }
   const server = startServer(opts.port, page);
   server.on('listening', () => {
     console.log('preview on http://localhost:' + server.address().port +
       ' — ' + BANNER);
+    console.log('deep links: /?view=overlay  /?view=settings  /?view=settings-apps');
   });
   return server;
 }
@@ -447,7 +535,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  BANNER, KEYS, EXIT, UsageError, parse,
+  BANNER, KEYS, EXIT, UsageError, parse, VIEWS, applyView,
   fixtureApps, fixtureSources, fixtureStorage, fixturePayload,
   loadFixtureComponent, elementFrom, materialize, htmlFrom, renderSnapshot,
   buildPage, startServer, main, SOURCE, WALLPAPER_URI
