@@ -342,3 +342,36 @@ class RestoreTests(BackupRestoreTestCase):
         code = self.run_restore(fake, self.out, manifest["entries"][0]["path"])
         self.assertEqual(code, 1)
         self.assertEqual(fake.written, {}, "md5 mismatch refuses before any write")
+
+
+class NeverTouchParityTest(unittest.TestCase):
+    """The Python guard and never-touch.cjs read the SAME rules file, so a rule
+    that fires in one and not the other is a hole in a write lane. The glob
+    rules are where the two implementations can drift: split('*') yields the
+    segments between asterisks, never the asterisk, so the wildcard has to be
+    emitted by the join."""
+
+    def test_glob_rule_matches_a_device_path(self):
+        hit = ALVIDAA._never_touch_hit("/dev/mmcblk0p20")
+        self.assertIsNotNone(hit, "the raw-emmc glob must catch a device node")
+        self.assertEqual(hit["id"], "raw-emmc")
+
+    def test_glob_matches_the_bare_prefix_too(self):
+        # '*' is zero-or-more, so the bare prefix matches — verified against
+        # never-touch.cjs, which returns raw-emmc for the same path. Parity, not
+        # preference: the two guards must agree on every path, including the
+        # ones where the answer is unintuitive.
+        hit = ALVIDAA._never_touch_hit("/dev/mmcblk")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["id"], "raw-emmc")
+
+    def test_glob_does_not_cross_a_slash(self):
+        self.assertIsNone(ALVIDAA._never_touch_hit("/dev/mmcblk0p20/child"),
+                          "'*' stops at '/', same as never-touch.cjs")
+
+    def test_an_ordinary_path_is_not_a_hit(self):
+        self.assertIsNone(ALVIDAA._never_touch_hit("/var/local/alvidaa/config.json"))
+
+
+if __name__ == "__main__":
+    unittest.main()

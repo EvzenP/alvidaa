@@ -618,8 +618,14 @@ def _nt_normalize(p):
 def _glob_to_re(pattern):
     """'*' matches any run of characters except '/'; everything else literal;
     anchored — mirrors never-touch.cjs globToRegExp."""
-    source = "".join("[^/]*" if part == "*" else re.escape(part)
-                     for part in pattern.split("*"))
+    # split('*') yields the segments BETWEEN asterisks, never the asterisk
+    # itself, so the join is what emits the wildcard. The previous form tested
+    # each segment for equality with "*", which can never be true — every glob
+    # compiled to its literal self with the asterisks stripped, so
+    # '/dev/mmcblk*' became '^/dev/mmcblk$' and the raw-emmc rule was dead in
+    # this guard while never-touch.cjs refused the same path (found 2026-11-13
+    # by cross-checking the two consumers of the same rules file).
+    source = "[^/]*".join(re.escape(part) for part in pattern.split("*"))
     return re.compile("^" + source + "$")
 
 
