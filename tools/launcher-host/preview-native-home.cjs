@@ -369,9 +369,17 @@ function buildPage(options = {}) {
     elementFrom.toString() + '\n' +
     materialize.toString() + '\n' +
     'function draw() { rootEl.innerHTML = ""; rootEl.appendChild(materialize(elementFrom(component.render.call(v, h)), draw)); }\n' +
-    // The component's own body keydown listener (mounted) walks the focus;
-    // this redraws after it. Body listeners fire before document ones.
-    'document.addEventListener("keydown", function () { draw(); });\n' +
+    // The component listens for the vendor's custom "key-down" event (mounted,
+    // native-alvidaa.js:324) — real keypresses are "keydown" and never reach it,
+    // so the page bridges them to handleKey itself (caught on the first real
+    // browser pass: the redraw-only listener made keyboard a no-op). handleKey
+    // returns whether it consumed the key; consumed keys preventDefault so
+    // arrows and Enter never scroll the page.
+    'document.addEventListener("keydown", function (e) {\n' +
+    '  var handled = v.handleKey(e.keyCode);\n' +
+    '  draw();\n' +
+    '  if (handled) e.preventDefault();\n' +
+    '});\n' +
     'window.addEventListener("resize", function () { draw(); });\n' +
     'setInterval(draw, 1000);\n' +
     'draw();\n' +

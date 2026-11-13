@@ -44,10 +44,15 @@ icons. Device art is the **real baked `AlvidaaNativeDeviceArt` rules** and
 the wallpaper is the real generated PNG — the same payloads a build inlines.
 
 Keyboard works like the TV: arrows move focus, Enter activates, Backspace
-closes the overlay. It is driven through the **component's own `handleKey`**
-— `mounted()` registers the body keydown listener, and the page only
-re-draws after it. Nothing here reimplements navigation; if the component's
-key handling changes, the preview follows automatically.
+closes the overlay. One bridge makes that true: the component listens for the
+vendor's custom `key-down` event (what the TV's shell dispatches), which real
+browser keypresses (`keydown`) never fire — so the page bridges real keydown
+events to the **component's own `handleKey`** and re-draws, consuming keys
+that handle it (`preventDefault`) so arrows and Enter never scroll. Nothing
+here reimplements navigation; if the component's key handling changes, the
+preview follows automatically. (The bridge was caught on the first real
+browser pass — a redraw-only listener passed every node:test and still made
+the keyboard a no-op. A parse check is not a keypress.)
 
 ## What a preview cannot show
 
@@ -88,5 +93,5 @@ opens the overlay and Backspace closes it; a favorite launches through the
 platform stub; the overlay pages and launches the focused app; `--out`
 writes a self-contained file carrying the banner, fixture names, component
 source, baked rules, wallpaper and rendered snapshot markup; the served page
-answers identically; the embedded scripts parse as JS; and the CLI usage
+answers identically; the embedded scripts parse as JS **and the boot script bridges real keydown to handleKey** (the component registers the vendor key-down event, which browser keypresses never fire); and the CLI usage
 contract.

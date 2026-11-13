@@ -228,11 +228,16 @@ test('the embedded boot script and component source parse as JS (no browser need
       'script ' + which + ' must parse');
   }
   assert.match(scripts[1], /component\.render\.call\(v, h\)/, 'the boot script renders through the component');
-  // Key handling itself is the component's own body listener (mounted()
-  // registers it, in script 0); the boot script only re-draws after it —
-  // driving handleKey directly would reimplement navigation.
-  assert.match(scripts[0], /handleKey/, 'the component source carries the key path');
-  assert.match(scripts[1], /addEventListener\("keydown"/, 'the boot script redraws on keys');
+  // The component listens for the vendor's custom "key-down" event
+  // (native-alvidaa.js mounted), which real keypresses never fire — they are
+  // "keydown". The boot script must therefore BRIDGE: keydown → handleKey →
+  // draw, or the served page's keyboard is a no-op (caught on the first real
+  // browser pass: a redraw-only listener passed every node:test).
+  assert.match(scripts[0], /addEventListener\("key-down"/, 'the component registers its vendor key event');
+  assert.match(scripts[1], /addEventListener\("keydown"[\s\S]*?v\.handleKey\(e\.keyCode\)/,
+    'the boot script bridges real keydown to handleKey');
+  assert.match(scripts[1], /v\.handleKey\(e\.keyCode\);[\s\S]*?draw\(\);[\s\S]*?preventDefault/,
+    'handled keys redraw then preventDefault');
 });
 
 test('usage: unknown flags and bad ports are usage errors; --help is clean', () => {
