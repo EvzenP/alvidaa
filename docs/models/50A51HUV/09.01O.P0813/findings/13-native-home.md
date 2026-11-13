@@ -220,3 +220,46 @@ a pixel diff against the previous frame to prove a change happened, and an
 ink-count over the region of interest to prove *what* changed. Both were run
 here; the diff is what showed that two earlier "fixes" had changed only the
 clock.
+
+## 9. Key injection: two lanes measured, both dead (2026-11-13)
+
+The CLI's `alvidaa key` was built to replace "press a key on the TV and tell me
+what you see" with a script. It does not work, and the reason is worth recording
+because the obvious fix is the wrong one.
+
+**Lane 1 — write to `/dev/input/eventN`: does nothing.** Those nodes are
+read-only for consumers; the kernel discards writes to them. The CLI's first
+device lane did exactly this, so every key it reported sending was dropped. Its
+own output flags HOME and ENTER as guesses, and marks RIGHT and DOWN as
+"verified on the reference unit" — that claim is wrong for this lane and has been
+corrected.
+
+**Lane 2 — a `/dev/uinput` virtual keyboard: registers, then is ignored.** A
+static armv7 emitter (`tools/tvkey/tvkey.c`, built with zig) creates the device
+and the kernel logs it:
+
+```
+input: alvidaa-key as /devices/virtual/input/input14
+```
+
+and it appears in `/proc/bus/input/devices`. But no key it emits moves the
+launcher: DOWN, RIGHT, ENTER and HOME each produced zero frame change over a
+12-second sample, measured by pixel diff outside the clock band.
+
+So the vendor's key handling reads its own physical devices (the `Hisense` BT
+device on event3, the MStar IR receiver on event1, the MTK keypad on event0) and
+ignores virtual ones. Injection has to arrive through a device the vendor already
+owns, or through the vendor's own API.
+
+**The lane that should work, and is untested:** the MQTT `ui_service` `sendkey`
+action — the vendor's own path, the one the remote-now client uses. It needs
+either a running bridge that exposes it, or a direct MQTT session with the paired
+identity. Nobody has tried the direct session, because the one-session rule means
+it would kick whatever holds the identity; with the bridge down it is free to try.
+
+**What this cost:** an hour of measurement, and one ambiguous moment where the
+apps drawer was open on screen and it was not clear whether a key had opened it
+or the owner had. The lesson is the same one the preview harness taught: a test
+that exercises the command builder is not a test that the command works. A
+hardware-gated check, or an honest "unverified on hardware" marker, would have
+prevented the claim.

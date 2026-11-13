@@ -26,7 +26,15 @@
 (function (root) {
   "use strict";
   var DOCK_SIZE = 264, DOCK_HEIGHT = 180, DOCK_GAP = 20, DOCK_PAGE = 6;
-  var OVERLAY_COLS = 6, OVERLAY_CELL = 176;
+  // The overlay sits on an 8px grid (issue: visual pass). Seven columns at
+  // 1080p is the measured density: labels were probed at the current type
+  // size (22px, both host and TV-ish stacks) and the worst realistic name
+  // measures 163px against a 192px tile — 176px usable — so 7 columns fit
+  // with the existing 20-character ellipsis as the backstop for outliers
+  // ("Chromecast built-in" measures 194px and ellipsizes). 1792-wide panel,
+  // 7 columns, and 8px-grid gutters have exactly one solution: gutters equal
+  // to the panel padding, 56 — one spacing value everywhere.
+  var OVERLAY_COLS = 7, OVERLAY_CELL = 160, OVERLAY_PAD = 56, OVERLAY_GUTTER = 56;
   var ICON = 80;
   // The name editor's on-screen keyboard: A-Z then 0-9 as a six-column grid,
   // with the four action cells in the last row. Up/Down moves KB_COLS cells.
@@ -1455,20 +1463,35 @@
         // alvidaa_groups is configured, the grouped sections. Same tile, same
         // icon policy, same click behaviour; only the position and the focused
         // index differ per call site.
+        //
+        // Focus treatment (visual pass): the tile reads as NEARER, not
+        // outlined. The old 2px white ring was the loudest thing on screen and
+        // it was not the content; what replaced it is the dock's own language —
+        // a 1.03 lift on the same 140ms ease-out, a hairline at low alpha, a
+        // soft shadow, and a low-alpha inner sheen that sits over the tile
+        // background but under the icon and label. Every state change is
+        // plain CSS on one node, so both directions of the transition are
+        // free. (x, y) is the tile's true origin: the gutter is real space
+        // between tiles now, not an inset trick.
         function overlayCell(app, selected, index, x, y, cellW) {
           var icon = vm.appIcon(app);
-          var cell = [];
+          var tileH = OVERLAY_CELL - 24;
+          var cell = [
+            h("div", { style: box(0, 0, cellW, tileH, {
+              backgroundColor: selected ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0)"
+            }) })
+          ];
           if (icon) {
             // backgroundImage, not an img node: the img path did not paint
             // cached icons on the Cobalt builds this was tested against.
-            cell.push(h("div", { style: box(0, 20, cellW - 16, ICON, {
+            cell.push(h("div", { style: box(0, 16, cellW, ICON, {
               backgroundImage: "url(" + JSON.stringify(icon) + ")",
               backgroundSize: "contain", backgroundPosition: "center",
               backgroundRepeat: "no-repeat"
             }) }));
           } else {
             var badge = brand(app.appName);
-            cell.push(h("div", { style: box((cellW - 16 - ICON) / 2, 20, ICON, ICON, {
+            cell.push(h("div", { style: box((cellW - ICON) / 2, 16, ICON, ICON, {
               borderRadius: 20, backgroundColor: badge, overflow: "hidden"
             }) }, [
               h("div", { style: box(0, 0, ICON, 2, { backgroundColor: "rgba(255,255,255,0.35)" }) }),
@@ -1480,16 +1503,20 @@
           }
           var name = String(app.appName || "");
           if (name.length > 20) name = name.slice(0, 19) + "\u2026";
-          cell.push(h("div", { style: box(0, OVERLAY_CELL - 56, cellW - 16, 34, {
+          cell.push(h("div", { style: box(0, 96, cellW, 34, {
             fontSize: 22, lineHeight: 34, textAlign: "center",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             color: selected ? "#f8fafc" : "#94a3b8"
           }) }, [name]));
           return h("div", {
             attrs: { role: "button", "aria-label": String(app.appName || ""), tabindex: selected ? "0" : "-1" },
-            style: box(x + 8, y + 8, cellW - 16, OVERLAY_CELL - 24, {
-              borderRadius: 28,
-              backgroundColor: selected ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
-              border: selected ? "2px solid #ffffff" : "2px solid rgba(255,255,255,0)",
+            style: box(x, y, cellW, tileH, {
+              borderRadius: 24,
+              backgroundColor: selected ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.03)",
+              border: selected ? "1px solid rgba(255,255,255,0.22)" : "1px solid rgba(255,255,255,0.05)",
+              boxShadow: selected ? "0 12px 28px rgba(0,0,0,0.5)" : "0 0 0 rgba(0,0,0,0)",
+              transform: selected ? "scale(1.03)" : "scale(1)",
+              transition: "transform 140ms ease-out, border-color 140ms ease-out, background-color 140ms ease-out",
               overflow: "hidden"
             }),
             on: { click: function (i) {
@@ -1811,59 +1838,94 @@
   // the grid right and down — the app list sat off-centre with its last row at
   // y=1056 on a 1080 screen (2026-11-10). The settings layer already uses
   // panel-relative coordinates, which is why it never showed this.
-  var panelX = 64, panelY = 140, panelW = 1792, panelH = 800;
-          var rows = Math.max(1, Math.floor((panelH - 96) / OVERLAY_CELL));
-          var cellW = (panelW - 112) / OVERLAY_COLS;
+  //
+  // Rhythm (visual pass): every offset is on the 8px grid and the cell width
+  // is DERIVED from the panel width, so the grid stays centred — with 7
+  // columns the one 8px-grid solution is gutters equal to the padding (56),
+  // and the formula below makes that derivation visible instead of hardcoding
+  // 192. Header 32, hint 64, list 96; tiles 192x136 inside 160-tall slots,
+  // 24 of which is the gap between rows.
+  var panelX = 64, panelY = 144, panelW = 1792, panelH = 800;
+          var pad = OVERLAY_PAD, gutter = OVERLAY_GUTTER;
+          var tileW = (panelW - 2 * pad - (OVERLAY_COLS - 1) * gutter) / OVERLAY_COLS;
+          var tileH = OVERLAY_CELL - 24;
+          var listY = 96;
+          var rows = Math.max(1, Math.floor((panelH - listY - pad) / OVERLAY_CELL));
+          var layout = this.overlayLayout();
+          // Real header: what is focused names the section when folders are in
+          // use, the count rides after it in a quieter weight, and the hint
+          // sits under the title on the same left edge instead of floating at
+          // the right side of the panel.
+          var spans = this.overlaySpans();
+          var groupName = null;
+          if (spans) {
+            for (var gs = 0; gs < spans.length; gs++) {
+              if (this.overlayIndex >= spans[gs].start &&
+                  this.overlayIndex < spans[gs].start + spans[gs].count) {
+                groupName = spans[gs].name;
+                break;
+              }
+            }
+          }
+          var shown = this.overlayList().length;
           var panel = [
-            h("div", { style: box(56, 40, null, null, {
-              fontSize: 22, lineHeight: 24, fontWeight: "600", color: "#64748b"
-            }) }, ["APPS"]),
-            h("div", { style: box(56, 40, panelW - 112, 24, {
-              fontSize: 18, lineHeight: 24, textAlign: "right", color: "#475569"
+            h("div", { style: box(pad, 32, panelW - 2 * pad, 26, {
+              fontSize: 22, lineHeight: 26, fontWeight: "600", color: "#94a3b8"
+            }) }, [
+              groupName || "APPS",
+              h("span", { style: { fontSize: "18px", fontWeight: "400", color: "#475569" } },
+                [" \u00b7 " + shown + (shown === 1 ? " app" : " apps")])
+            ]),
+            h("div", { style: box(pad, 64, panelW - 2 * pad, 20, {
+              fontSize: 16, lineHeight: 20, fontWeight: "400", color: "#475569"
             }) }, ["OK to open \u00b7 BACK to close"])
           ];
-          var layout = this.overlayLayout();
           if (!this.apps.length) {
-            panel.push(h("div", { style: box(56, 112, null, null, {
+            panel.push(h("div", { style: box(pad, 112, null, null, {
               fontSize: 28, lineHeight: 32, color: "#475569"
             }) }, ["no apps reported"]));
           } else if (!layout) {
-            // Unset config (issue #57): the flat grid, unchanged.
+            // Unset config (issue #57): the flat grid.
             var firstRow = Math.max(0, Math.floor(this.overlayIndex / OVERLAY_COLS) - rows + 1);
             var first = firstRow * OVERLAY_COLS;
             for (var a = first; a < this.apps.length; a++) {
               var row = Math.floor((a - first) / OVERLAY_COLS), col = a % OVERLAY_COLS;
               if (row >= rows) break;
               panel.push(overlayCell(this.apps[a], this.overlayIndex === a, a,
-                56 + col * cellW, 96 + row * OVERLAY_CELL, cellW));
+                pad + col * (tileW + gutter), listY + row * OVERLAY_CELL, tileW));
             }
           } else {
-            // Configured groups (issue #57): header slots between cell rows,
-            // one focus path over the flattened list, windowed on the focused
-            // row. A header takes a full cell-height slot so the paging math
-            // stays the same as the flat grid's.
-            var focusedRow = 0;
+            // Configured groups (issue #57): one focus path over the flattened
+            // list, windowed on the focused slot. A group heading gets MORE
+            // air above it (40) than the rows get between them (24), so the
+            // eye reads groups without a box around them — the band is
+            // 40 + text 24 + 16 below = 80, all on the grid. The slot window
+            // stays count-based because worst case (two headings, two rows)
+            // totals 480px, well inside the 704 the panel offers.
+            var focusedSlot = 0;
             for (var lr = 0; lr < layout.length; lr++) {
               if (layout[lr].cells && this.overlayIndex >= layout[lr].start &&
                   this.overlayIndex < layout[lr].start + layout[lr].cells.length) {
-                focusedRow = lr;
+                focusedSlot = lr;
                 break;
               }
             }
-            var gFirst = Math.max(0, focusedRow - rows + 1);
+            var gFirst = Math.max(0, focusedSlot - rows + 1);
+            var y = listY;
             for (var vr = gFirst; vr < layout.length && vr < gFirst + rows; vr++) {
               var slot = layout[vr];
-              var slotY = 96 + (vr - gFirst) * OVERLAY_CELL;
               if (slot.header) {
-                panel.push(h("div", { style: box(56, slotY + 6, panelW - 112, 24, {
-                  fontSize: 18, lineHeight: 24, fontWeight: "600",
-                  letterSpacing: "1px", color: "#64748b"
+                panel.push(h("div", { style: box(pad, y + 40, panelW - 2 * pad, 24, {
+                  fontSize: 16, lineHeight: 24, fontWeight: "600",
+                  letterSpacing: "1px", color: "#7c8aa0"
                 }) }, [slot.header]));
+                y += 80;
               } else {
                 for (var cc = 0; cc < slot.cells.length; cc++) {
                   panel.push(overlayCell(slot.cells[cc], this.overlayIndex === slot.start + cc,
-                    slot.start + cc, 56 + cc * cellW, slotY, cellW));
+                    slot.start + cc, pad + cc * (tileW + gutter), y, tileW));
                 }
+                y += OVERLAY_CELL;
               }
             }
           }

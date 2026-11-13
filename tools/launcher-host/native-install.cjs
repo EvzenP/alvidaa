@@ -296,20 +296,29 @@ function watcherStep(opts, m, mode, what) {
         : ' from ' + WATCHER_BACKUP + ', if that backup exists'));
     return;
   }
-  try {
-    syncWatcher(opts, m, mode);
-  } catch (error) {
-    throw new Error(mode === 'disable'
-      ? 'the ' + what + ' bundle IS installed (the switch reported OK), but the watcher sync failed:\n' +
-        '  ' + error.message + '\n' +
-        'TV state: ' + what + ' bundle in place, watcher config untouched; the bridge will hide the native Home.\n' +
-        'Re-run the same install command to retry the watcher sync, or run rollback to get back to stock.'
-      : 'the stock Home IS restored (the switch reported OK), but the watcher restore failed:\n' +
-        '  ' + error.message + '\n' +
-        'TV state: stock Home in place, watcher config untouched; its state is unknown.\n' +
-        'Re-run the same rollback command to retry the watcher restore.');
+  // The TV closes SSH connections for a second or two around the engine
+  // restart — measured four times on 2026-11-12/13, always right after a
+  // switch, always transient. The sync is idempotent (the backup is taken once,
+  // the write is atomic), so retrying is safe and turns a scary "the bridge will
+  // hide the native Home" into the truth.
+  const transient = /Connection closed|Connection reset|closed by remote host|Broken pipe/i;
+  let attempt = 0;
+  for (;;) {
+    try {
+      syncWatcher(opts, m, mode);
+      return;
+    } catch (error) {
+      attempt++;
+      if (attempt < 3 && transient.test(String(error.message))) {
+        console.warn('watcher: connection dropped by the TV during the restart; retrying (' + attempt + '/2)');
+        cp.spawnSync('sleep', ['3']);
+        continue;
+      }
+      throw error;
+    }
   }
 }
+
 
 // --- per-input art (issue #34) ----------------------------------------------
 //
