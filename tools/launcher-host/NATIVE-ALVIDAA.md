@@ -252,11 +252,48 @@ menu. `alvidaa_groups` in `sdk.storage` turns it into named sections:
   deliverable (issue #57); an editor row is future work. Until then the key
   is written by hand into the bridge config or over the storage lane.
 
-The grouped render windows on the focused row like the flat grid does; a
-group header takes a full cell-height slot, so the paging math is the same.
-Launches still record recency and re-sort the ungrouped tail; the groups
-themselves re-resolve from config, so their members stay where the config
-put them.
+The grouped render windows on the focused slots like the flat grid does. A
+group heading occupies an 80px band (40 above the label, 24 label, 16 below)
+— more air above than the 24px gap between rows, so the eye reads groups
+without a box around them. Launches still record recency and re-sort the
+ungrouped tail; the groups themselves re-resolve from config, so their
+members stay where the config put them.
+
+### Overlay treatment (visual pass)
+
+The owner's read on the overlay was "looks cheap": the geometry was fine, the
+treatment was flat — a 2px white ring, a `rgba(255,255,255,0.10)` fill, and a
+header that was a label plus a floating hint. Four changes, all inside the
+existing render and the `box()`/`label()` helpers:
+
+- **Focus is a lift, not an outline.** The white 2px ring was the loudest
+  thing on screen and it was not the content. The focused tile now uses the
+  dock's own language: a `scale(1.03)` lift on the same 140ms ease-out, a
+  1px hairline at low alpha (`rgba(255,255,255,0.22)` focused, `0.05`
+  unfocused), a soft shadow (`0 12px 28px rgba(0,0,0,0.5)`), and an inner
+  sheen — a low-alpha layer over the tile background but under the icon and
+  label, transparent when unfocused. Every state change is plain CSS on one
+  node, so both directions of the transition are free.
+- **A real header.** Title, the focused group's name when folders are in
+  use, and the count (`· 12 apps`) on one line; the hint
+  (`OK to open · BACK to close`) sits under the title on the same left edge
+  at 16px / weight 400 instead of floating at the panel's right edge.
+- **An 8px rhythm with a derived cell size.** The cell width is computed
+  from the panel width, not hardcoded: `(1792 − 2·56 − 6·56) / 7 = 192`.
+  With 7 columns the only 8px-grid solution in a 1792 panel is gutters equal
+  to the padding — one spacing value (56) everywhere, so the grid is centred
+  and the gutters match. Header 32, hint 64, list 96; tiles 192×136 inside
+  160-tall slots, 24 of which is the gap between rows.
+- **Seven columns, measured.** Labels were probed at the current type size
+  (22px, host and TV-ish stacks, widest of the two) over 28 realistic app
+  names: 27 fit the 192px tile, worst realistic case 163px
+  ("Nintendo Switch"); one outlier ("Chromecast built-in", 194px) hits the
+  existing 20-character ellipsis policy, which now also has a CSS
+  `text-overflow: ellipsis` backstop. 28 apps visible (7×4) against 24
+  before — the scroll the owner complained about is shorter.
+
+Everything else is untouched: focus index, scrolling, Back ownership, the
+folder navigation from #57, the number hotkeys, the per-app tint from #56.
 
 ### Preferences
 
@@ -597,5 +634,9 @@ Left/Right within a group and Up/Down between them, OK launching the focused
 app, one focus path over the flattened list), the per-app tint (no map no
 layer, favourite focus fades the wash toward the baked colour and back, the
 render-side luminance clamp, malformed and missing entries, the build embedding
-the map only when given), render structure and scaling, the entry's variant
+the map only when given), the overlay visual pass (the focused tile lifts —
+hairline, sheen, shadow and scale asserted against the tree, the ring gone
+everywhere, the header title/count/hint placement, equal 56px gutters and a
+centred derived grid at 1920, the heading band's 64px air above versus the
+24px row gap), render structure and scaling, the entry's variant
 selection, and the build's hash and output guards.

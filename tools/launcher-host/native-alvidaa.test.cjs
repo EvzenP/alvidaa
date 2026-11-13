@@ -169,9 +169,11 @@ test('app overlay pages, launches and clamps at both ends', () => {
   v.handleKey(k.RIGHT);
   assert.equal(v.overlayIndex, 1);
   v.handleKey(k.DOWN);
-  assert.equal(v.overlayIndex, 7);
+  // The visual pass measured 7 columns at 1080p (labels fit the 192px tile),
+  // so a flat row step is 7 now — the launched app is index 8.
+  assert.equal(v.overlayIndex, 8);
   v.handleKey(k.ENTER);
-  assert.deepEqual(f.calls.at(-1), ['launch', '7']);
+  assert.deepEqual(f.calls.at(-1), ['launch', '8']);
   assert.equal(v.overlay, false);
   v.overlay = true;
   v.overlayIndex = 11;
@@ -1779,7 +1781,9 @@ test('groups: unset config keeps the flat grid exactly as before', () => {
   v.overlay = true;
   v.overlayIndex = 0;
   v.handleKey(k.DOWN);
-  assert.equal(v.overlayIndex, 6, 'Up/Down still steps a full flat row');
+  // 7 columns after the measured density change; the flat grid itself is
+  // still the flat grid — no headers, no catch-all.
+  assert.equal(v.overlayIndex, 7, 'Up/Down still steps a full flat row');
   v.handleKey(k.UP);
   assert.equal(v.overlayIndex, 0);
   assert.equal(v.overlayList(), v.apps, 'the shown list is the app list itself');
@@ -1870,7 +1874,7 @@ test('groups: the grouped overlay renders headers and cells from one focus path'
   v.apps = ['a', 'b', 'c', 'd'].map(id => ({ appId: id, appName: 'App ' + id }));
   v.prefs.groups = [{ name: 'First', apps: ['a', 'b', 'c'] }, { name: 'Second', apps: ['d'] }];
   v.overlay = true;
-  v.overlayIndex = 2; // c, second row of First
+  v.overlayIndex = 2; // c — with 7 columns First's three apps share one row
   const tree = f.component.render.call(v, (tag, data, children) => ({ tag, data, children }));
   const flat = flatten(tree);
   const texts = flat.flatMap(n => n.children || []).filter(c => typeof c === 'string');
@@ -1881,10 +1885,11 @@ test('groups: the grouped overlay renders headers and cells from one focus path'
     n.data.style.borderRadius === '48px' && n.data.style.backgroundColor === 'rgba(14,18,26,0.97)');
   assert.ok(panel, 'the overlay panel renders');
   const cells = flatten(panel).filter(n => n.data && n.data.attrs &&
-    n.data.attrs.role === 'button' && n.data.style.borderRadius === '28px');
+    n.data.attrs.role === 'button' && n.data.style.borderRadius === '24px');
   assert.equal(cells.length, 4, 'all four apps render as overlay cells');
-  // The focused cell is c: white border, non-focused siblings keep the quiet fill.
-  assert.equal(cells.filter(n => n.data.style.border === '2px solid #ffffff').length, 1,
+  // The focused cell is c: the lift treatment (hairline + sheen), not a ring —
+  // non-focused siblings keep the quiet hairline.
+  assert.equal(cells.filter(n => n.data.style.border === '1px solid rgba(255,255,255,0.22)').length, 1,
     'exactly one focused cell — a single focus path');
   assert.equal(flat.filter(n => n.tag === 'img').length, 0, 'shapes and text only');
   v.stop();
@@ -1976,4 +1981,123 @@ test('the build bakes AlvidaaNativeAppColours when given, nothing when not', () 
   const tinted = build(stockFile, null, digest, { appColours: { 'netflix.png': '#b20710' } });
   assert.ok(tinted.includes('self.AlvidaaNativeAppColours={"netflix.png":"#b20710"}'));
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- overlay visual pass -----------------------------------------------------
+
+function overlayPanelOf(f, v) {
+  return flatten(f.component.render.call(v, (tag, data, children) =>
+    ({ tag, data, children }))).find(n => n.data && n.data.style &&
+    n.data.style.borderRadius === '48px' && n.data.style.backgroundColor === 'rgba(14,18,26,0.97)');
+}
+function overlayCellsOf(panel) {
+  return flatten(panel).filter(n => n.data && n.data.attrs &&
+    n.data.attrs.role === 'button' && n.data.style.borderRadius === '24px');
+}
+function px(value) { return Number(String(value).replace('px', '')); }
+
+test('overlay visual: the focused tile lifts — hairline, sheen and scale, not a ring', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.apps = ['a', 'b', 'c'].map(id => ({ appId: id, appName: 'App ' + id }));
+  v.overlay = true;
+  v.overlayIndex = 1;
+  const panel = overlayPanelOf(f, v);
+  const cells = overlayCellsOf(panel);
+  assert.equal(cells.length, 3);
+  const focused = cells.find(n => n.data.attrs.tabindex === '0');
+  const rest = cells.filter(n => n !== focused);
+  assert.equal(focused.data.style.transform, 'scale(1.03)', 'the focused tile is lifted');
+  assert.equal(focused.data.style.border, '1px solid rgba(255,255,255,0.22)',
+    'a hairline at low alpha, not the 2px white ring');
+  assert.equal(focused.data.style.boxShadow, '0 12px 28px rgba(0,0,0,0.5)', 'a soft shadow sells the depth');
+  const washOf = cell => flatten(cell).find(n => n.data && n.data.style &&
+    n.data.style.backgroundColor === 'rgba(255,255,255,0.10)');
+  assert.ok(washOf(focused), 'the focused tile carries an inner sheen');
+  for (const r of rest) {
+    assert.equal(r.data.style.transform, 'scale(1)');
+    assert.equal(r.data.style.border, '1px solid rgba(255,255,255,0.05)');
+    assert.equal(r.data.style.boxShadow, '0 0 0 rgba(0,0,0,0)');
+    assert.equal(washOf(r), undefined, 'unfocused tiles have no sheen');
+  }
+  assert.equal(flatten(panel).filter(n => n.data && n.data.style &&
+    String(n.data.style.border || '').indexOf('2px solid #ffffff') >= 0).length, 0,
+    'the white ring is gone from the overlay entirely');
+  v.stop();
+});
+
+test('overlay visual: the header carries the count and the hint sits with it', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.apps = Array.from({ length: 12 }, (_, i) => ({ appId: String(i), appName: 'App ' + i }));
+  v.overlay = true;
+  v.overlayIndex = 0;
+  const panel = overlayPanelOf(f, v);
+  const texts = flatten(panel).flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(texts.includes('APPS'), 'the title');
+  assert.ok(texts.includes(' \u00b7 12 apps'), 'the count rides after the title');
+  const hint = flatten(panel).find(n => (n.children || []).includes('OK to open \u00b7 BACK to close'));
+  assert.ok(hint, 'the hint renders');
+  assert.equal(hint.data.style.fontSize, '16px', 'quieter than before');
+  assert.equal(hint.data.style.fontWeight, '400');
+  assert.equal(hint.data.style.left, '56px', 'on the header\'s left edge');
+  assert.equal(hint.data.style.top, '64px', 'under the title, not floating at the right edge');
+  // Grouped mode names the focused section in the title.
+  const g = setup(), w = g.instance;
+  w.start();
+  w.apps = ['a', 'b', 'c', 'd'].map(id => ({ appId: id, appName: 'App ' + id }));
+  w.prefs.groups = [{ name: 'Media', apps: ['a', 'b'] }, { name: 'Games', apps: ['c', 'd'] }];
+  w.overlay = true;
+  w.overlayIndex = 2; // c, in Media
+  const gTexts = flatten(overlayPanelOf(g, w)).flatMap(n => n.children || []).filter(c => typeof c === 'string');
+  assert.ok(gTexts.includes('Media'), 'the focused group names the header');
+  assert.ok(gTexts.includes(' \u00b7 4 apps'), 'the count is the whole shown list');
+  v.stop(); w.stop();
+});
+
+test('overlay visual: the grid gutters are equal at 1920', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.apps = Array.from({ length: 14 }, (_, i) => ({ appId: String(i), appName: 'App ' + i }));
+  v.overlay = true;
+  v.overlayIndex = 0;
+  const cells = overlayCellsOf(overlayPanelOf(f, v));
+  assert.equal(cells.length, 14, 'two full rows of seven');
+  const lefts = cells.map(n => px(n.data.style.left));
+  const tops = cells.map(n => px(n.data.style.top));
+  const widths = cells.map(n => px(n.data.style.width));
+  assert.ok(widths.every(w => w === 192), 'every tile is the derived 192px width');
+  const row1 = lefts.slice(0, 7), row2 = lefts.slice(7);
+  const gaps = row1.slice(1).map((l, i) => l - (row1[i] + widths[0]));
+  assert.ok(gaps.every(g => g === 56), 'every gutter is 56 — equal to the panel padding');
+  assert.equal(row1[0], 56, 'left margin equals the gutter');
+  assert.equal(1792 - (row1[6] + widths[0]), 56, 'right margin equals the gutter — the grid is centred');
+  assert.deepEqual(row2, row1, 'the second row sits on the same columns');
+  assert.equal(tops[7] - tops[0], 160, 'rows sit on the 160px slot');
+  v.stop();
+});
+
+test('overlay visual: a group heading gets more air above than the rows get between', () => {
+  const f = setup(), v = f.instance;
+  v.start();
+  v.apps = ['a', 'b', 'c', 'd'].map(id => ({ appId: id, appName: 'App ' + id }));
+  v.prefs.groups = [{ name: 'First', apps: ['a', 'b', 'c'] }, { name: 'Second', apps: ['d'] }];
+  v.overlay = true;
+  v.overlayIndex = 0;
+  const panel = overlayPanelOf(f, v);
+  const cells = overlayCellsOf(panel);
+  const tops = cells.map(n => px(n.data.style.top));
+  // First's three apps share one row — but the first slot in the panel is
+  // First's own heading band (80), so the row starts at 96 + 80.
+  assert.equal(tops[0], 176);
+  assert.equal(tops[3], 96 + 80 + 160 + 80, 'the Second heading band (80) sits between the rows');
+  const heading = flatten(panel).find(n => (n.children || []).includes('Second'));
+  const headingTop = px(heading.data.style.top);
+  const spaceAbove = headingTop - (tops[0] + 136); // tile height is 136
+  const below = tops[3] - (headingTop + 24);
+  assert.equal(spaceAbove, 64, 'the 24px row gap plus 40 more above the heading');
+  assert.equal(below, 16, 'and less below it');
+  const flatGap = 160 - 136;
+  assert.ok(spaceAbove > flatGap, 'more space above the heading than the 24px gap between rows');
+  v.stop();
 });
