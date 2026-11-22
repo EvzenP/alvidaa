@@ -20,6 +20,8 @@ This is specific to that model and firmware. Read the model guide first:
 | [`scripts/trigger.sh`](scripts/trigger.sh) | Serve the re-arm page and optionally launch it; used after a reboot. |
 | [`scripts/make_installer.py`](scripts/make_installer.py) | Build the IPK from your two binaries and your public key. The `postinst` runs as root. |
 | [`scripts/launch_tile.py`](scripts/launch_tile.py) | Launch a tile over MQTT using the sidee session. The only step that needs a paired session. |
+| [`scripts/pull_localization.sh`](scripts/pull_localization.sh) | Read-only pull of the five localization packages (code + bundle files for `--src`/`--tgt`, default `eng`/`cze`) over the root SSH lane, into `/tmp/ur9s-loc` (pass `--out` for a persistent location). |
+| [`scripts/build_localization.py`](scripts/build_localization.py) | Build the localization string tables (per-package markdown + index README + `strings.json`) from a pulled tree, into an output dir you choose (e.g. `/tmp/ur9s-loc/tables`); `--src`/`--tgt` select the language pair (default `eng`/`cze`). |
 | [`web/install.html`](web/install.html) | TV-side installer page: start `fetcher`, write `sw2.js` and the IPK, trigger the install, read the log. |
 | [`web/trigger.html`](web/trigger.html) | TV-side re-arm page: send uninstall `83` then install `82`. |
 | [`web/server.py`](web/server.py) | Plain HTTP server for the pages and `web/pub/`; stores TV POSTs under `web/captures/`. |

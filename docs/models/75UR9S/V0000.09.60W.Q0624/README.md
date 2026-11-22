@@ -230,6 +230,16 @@ the marker silently failed before).
 `serviceList.json.pristine`), `rm -r CHA/services/re_sshd`, `rm /APPS/.re_sshd/boot_marker.txt`.
 Everything else (dropbear, IPK, trigger) is the standard rollback above.
 
+## Localization (2026-11-22)
+
+The TV's menu localization is fully inventoriable: all **5672 keys** of the
+five string-provider packages (findings 04 §3) can be mapped to the package
+code file(s) that reference each key. Method, measurements and traps:
+[findings 05](findings/05-localization-string-inventory.md). Generate the
+per-language inventory (tables + `strings.json`) on demand with
+`tools/ur9s/scripts/pull_localization.sh` + `build_localization.py`
+(`--src`/`--tgt` select the language pair; default English → Czech).
+
 ## Open items
 
 - OTA freeze: **owner disabled OTA in the TV settings menu** (2026-11-04) —

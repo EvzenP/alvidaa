@@ -73,8 +73,10 @@ Notes:
   base). The active variant on this TV is **VDA**. If the key you are editing is
   overridden in the active variant, patch the variant file too — it wins over
   the base.
-- `missing_language.json` (Format A) is the fallback for keys absent in the
-  active locale.
+- `missing_language.json` (Format A) sits at the **app root** (not under
+  `language/`) and is a shipped per-locale report of entries whose value is
+  the literal `"undefined"` — a translation-QA artifact, not a runtime
+  fallback (measured 2026-11-22; [findings 05 §3.1](05-localization-string-inventory.md#31-missing_languagejson-is-a-qa-report-not-a-runtime-fallback)).
 - These five cover all **persistent** menu/setting labels. Transient OSD
   elements (volume bar, channel-number overlay) and the power-on logo are
   rendered by the engine and are not all present in the bundles.
