@@ -29,9 +29,9 @@ were scanned for the key token and the referencing file(s) recorded:
    differs only in the edited bundle files, so the `/opt` code is the live
    code.
 
-Tooling: [`tools/ur9s/scripts/pull_localization.sh`](../../../../tools/ur9s/scripts/pull_localization.sh)
+Tooling: [`tools/ur9s/scripts/pull_localization.sh`](../../../../../tools/ur9s/scripts/pull_localization.sh)
 +
-[`tools/ur9s/scripts/build_localization.py`](../../../../tools/ur9s/scripts/build_localization.py)
+[`tools/ur9s/scripts/build_localization.py`](../../../../../tools/ur9s/scripts/build_localization.py)
 (regenerates the whole inventory).
 
 ## 2. Result — who owns the strings
